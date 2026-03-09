@@ -20,11 +20,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateAvailable: (cb) => {
     ipcRenderer.on('update-available', (event, info) => cb(info))
   },
+  onUpdateNotAvailable: (cb) => {
+    ipcRenderer.on('update-not-available', () => cb())
+  },
   onUpdateProgress: (cb) => {
     ipcRenderer.on('update-progress', (event, progress) => cb(progress))
-  },
-  onUpdateDownloaded: (cb) => {
-    ipcRenderer.on('update-downloaded', (event, info) => cb(info))
   },
   onMaximizedState: (cb) => {
     ipcRenderer.on('window-maximized-state', (event, state) => cb(state))

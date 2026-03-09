@@ -48,8 +48,9 @@ export default function OptionsModal({ onClose, onThemeChange }) {
 
   useEffect(() => {
     if (window.electronAPI) {
-      window.electronAPI.onUpdateAvailable(() => setUpdateStatus('Update available! Click to download.'))
-      window.electronAPI.onUpdateDownloaded(() => setUpdateStatus('Update downloaded. Restart to apply.'))
+      window.electronAPI.onUpdateAvailable((info) => setUpdateStatus(`Update ${info.version} found — downloading...`))
+      window.electronAPI.onUpdateNotAvailable(() => setUpdateStatus('up-to-date'))
+      window.electronAPI.onUpdateProgress((p) => setUpdateStatus(`Downloading... ${Math.round(p.percent)}%`))
     }
   }, [])
 
@@ -288,15 +289,12 @@ export default function OptionsModal({ onClose, onThemeChange }) {
             <div style={styles.section}>
               <h3 style={styles.sectionTitle}>Updates</h3>
               <p style={styles.para}>Current version: <strong>1.0.0</strong></p>
-              {updateStatus && (
-                <div style={styles.updateStatus}>{updateStatus}</div>
-              )}
               <button
                 style={styles.actionBtn}
                 onClick={() => {
                   if (window.electronAPI) {
                     window.electronAPI.checkForUpdates()
-                    setUpdateStatus('Checking for updates...')
+                    setUpdateStatus('Checking...')
                   } else {
                     setUpdateStatus('Not available in browser mode.')
                   }
@@ -304,21 +302,14 @@ export default function OptionsModal({ onClose, onThemeChange }) {
               >
                 Check for Updates
               </button>
-              {updateStatus === 'Update available! Click to download.' && (
-                <button
-                  style={{ ...styles.actionBtn, marginTop: 8, background: 'var(--game-color)' }}
-                  onClick={() => window.electronAPI?.startUpdate()}
-                >
-                  Download Update
-                </button>
-              )}
-              {updateStatus === 'Update downloaded. Restart to apply.' && (
-                <button
-                  style={{ ...styles.actionBtn, marginTop: 8, background: '#38a169' }}
-                  onClick={() => window.electronAPI?.restartApp()}
-                >
-                  Restart & Apply
-                </button>
+              {updateStatus && (
+                <div style={{
+                  ...styles.updateStatus,
+                  marginTop: 12,
+                  color: updateStatus === 'up-to-date' ? '#4ade80' : 'var(--text-primary)',
+                }}>
+                  {updateStatus === 'up-to-date' ? "You're up to date" : updateStatus}
+                </div>
               )}
             </div>
           )}

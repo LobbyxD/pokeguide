@@ -190,10 +190,14 @@ autoUpdater.on('update-available', (info) => {
   win && win.webContents.send('update-available', info)
 })
 
+autoUpdater.on('update-not-available', () => {
+  win && win.webContents.send('update-not-available')
+})
+
 autoUpdater.on('download-progress', (progress) => {
   win && win.webContents.send('update-progress', progress)
 })
 
-autoUpdater.on('update-downloaded', (info) => {
-  win && win.webContents.send('update-downloaded', info)
+autoUpdater.on('update-downloaded', () => {
+  autoUpdater.quitAndInstall(true, true)
 })

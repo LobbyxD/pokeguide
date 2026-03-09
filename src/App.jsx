@@ -18,6 +18,8 @@ export default function App() {
   const [showOptions, setShowOptions] = useState(false)
   const [fetchKey, setFetchKey] = useState(0)
   const [pokedexInitialSearch, setPokedexInitialSearch] = useState('')
+  const [updateInfo, setUpdateInfo] = useState(null)      // { version } when update available
+  const [updateProgress, setUpdateProgress] = useState(null) // 0-100 while downloading
 
   const historyRef = useRef([])
   const historyIndexRef = useRef(-1)
@@ -43,6 +45,13 @@ export default function App() {
       document.documentElement.style.setProperty('--accent', selectedGame.color)
     }
   }, [selectedGame])
+
+  // Auto-updater listeners
+  useEffect(() => {
+    if (!window.electronAPI) return
+    window.electronAPI.onUpdateAvailable((info) => setUpdateInfo(info))
+    window.electronAPI.onUpdateProgress((p) => setUpdateProgress(Math.round(p.percent)))
+  }, [])
 
   // Apply saved theme
   useEffect(() => {
@@ -205,6 +214,146 @@ export default function App() {
           }}
         />
       )}
+
+      {updateInfo && (
+        <div style={updateStyles.overlay}>
+          <div style={updateStyles.modal}>
+            <div style={updateStyles.icon}>↑</div>
+            {updateProgress === null ? (
+              <>
+                <div style={updateStyles.title}>Update Available</div>
+                <div style={updateStyles.sub}>Version {updateInfo.version} is ready to install.</div>
+                <div style={updateStyles.sub2}>The app will restart automatically when done.</div>
+                <div style={updateStyles.actions}>
+                  <button
+                    style={updateStyles.btnPrimary}
+                    onClick={() => {
+                      setUpdateProgress(0)
+                      window.electronAPI.startUpdate()
+                    }}
+                  >
+                    Update Now
+                  </button>
+                  <button style={updateStyles.btnSecondary} onClick={() => setUpdateInfo(null)}>
+                    Later
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={updateStyles.title}>Downloading Update...</div>
+                <div style={updateStyles.progressBar}>
+                  <div style={{ ...updateStyles.progressFill, width: `${updateProgress}%` }} />
+                </div>
+                <div style={updateStyles.progressLabel}>{updateProgress}%</div>
+                <div style={updateStyles.sub2}>The app will restart automatically when done.</div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
+}
+
+const updateStyles = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 99999,
+    backdropFilter: 'blur(4px)',
+  },
+  modal: {
+    width: 340,
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 14,
+    padding: '28px 28px 24px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    textAlign: 'center',
+    boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+  },
+  icon: {
+    width: 44,
+    height: 44,
+    borderRadius: '50%',
+    background: 'var(--game-color)',
+    color: '#fff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 22,
+    fontWeight: 800,
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 17,
+    fontWeight: 700,
+    marginBottom: 8,
+    color: 'var(--text-primary)',
+  },
+  sub: {
+    fontSize: 13,
+    color: 'var(--text-secondary)',
+    marginBottom: 4,
+  },
+  sub2: {
+    fontSize: 12,
+    color: 'var(--text-muted)',
+    marginTop: 8,
+  },
+  actions: {
+    display: 'flex',
+    gap: 10,
+    marginTop: 20,
+    width: '100%',
+  },
+  btnPrimary: {
+    flex: 1,
+    background: 'var(--game-color)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '10px 0',
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  btnSecondary: {
+    flex: 1,
+    background: 'var(--bg-tertiary)',
+    color: 'var(--text-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 8,
+    padding: '10px 0',
+    fontSize: 14,
+    fontWeight: 500,
+    cursor: 'pointer',
+  },
+  progressBar: {
+    width: '100%',
+    height: 6,
+    background: 'var(--bg-tertiary)',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginTop: 16,
+  },
+  progressFill: {
+    height: '100%',
+    background: 'var(--game-color)',
+    borderRadius: 3,
+    transition: 'width 0.3s ease',
+  },
+  progressLabel: {
+    fontSize: 13,
+    color: 'var(--text-secondary)',
+    marginTop: 8,
+    fontWeight: 600,
+  },
 }
