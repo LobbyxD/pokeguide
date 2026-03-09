@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, globalShortcut, shell, dialog } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const { spawn } = require('child_process')
@@ -212,6 +212,83 @@ autoUpdater.on('error', (err) => {
 
 // Replay pending update info if renderer asks after the event already fired
 ipcMain.handle('get-pending-update', () => pendingUpdateInfo)
+
+// Preset helpers
+function getPresetsDir() {
+  const dir = path.join(app.getPath('userData'), 'presets')
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+ipcMain.handle('get-presets-dir', () => getPresetsDir())
+
+ipcMain.handle('list-presets', () => {
+  const dir = getPresetsDir()
+  return fs.readdirSync(dir)
+    .filter(f => f.endsWith('.pgpreset'))
+    .map(f => {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))
+        return { filename: f, name: data.name || f.replace('.pgpreset', ''), type: data.type, title: data.game?.title }
+      } catch { return null }
+    })
+    .filter(Boolean)
+})
+
+ipcMain.handle('save-preset', (event, { name, data }) => {
+  try {
+    const dir = getPresetsDir()
+    const safeName = name.replace(/[^a-z0-9_\-]/gi, '_')
+    fs.writeFileSync(path.join(dir, `${safeName}.pgpreset`), JSON.stringify(data, null, 2))
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('export-preset', async (event, { data, defaultName }) => {
+  const dir = getPresetsDir()
+  const result = await dialog.showSaveDialog(win, {
+    defaultPath: path.join(dir, `${defaultName}.pgpreset`),
+    filters: [{ name: 'PokeGuide Preset', extensions: ['pgpreset'] }],
+  })
+  if (result.canceled || !result.filePath) return { success: false }
+  try {
+    fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2))
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('import-preset', async () => {
+  const result = await dialog.showOpenDialog(win, {
+    filters: [{ name: 'PokeGuide Preset', extensions: ['pgpreset'] }],
+    properties: ['openFile'],
+  })
+  if (result.canceled || !result.filePaths.length) return null
+  try {
+    return JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'))
+  } catch { return null }
+})
+
+ipcMain.handle('read-preset', (event, filename) => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(getPresetsDir(), filename), 'utf8'))
+  } catch { return null }
+})
+
+ipcMain.handle('delete-preset', (event, filename) => {
+  try {
+    fs.unlinkSync(path.join(getPresetsDir(), filename))
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('write-file', (event, { filePath, content }) => {
+  try {
+    const dir = path.dirname(filePath)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(filePath, content)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
 
 // AI text generation via DuckDuckGo AI Chat (free, no auth)
 ipcMain.handle('generate-ai-text', (event, prompt) => {

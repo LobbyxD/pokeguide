@@ -30,7 +30,7 @@ function getPokemonRange(slug) {
   };
   const range = ranges[slug.toLowerCase()] || {
     start: 1,
-    end: Math.min(totalPokemon, 151),
+    end: totalPokemon,
   };
   return { start: range.start, end: Math.min(range.end, totalPokemon) };
 }

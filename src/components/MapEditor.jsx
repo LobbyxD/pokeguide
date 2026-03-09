@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { MousePointer, Square, Hand, Plus, Minus, Home, Image, Download, Upload, X, RotateCcw } from './Icons.jsx'
 import { onStorageChange } from '../utils/store.js'
+import { useDialog } from './Dialog.jsx'
 
 const AREA_TYPES = ['Town', 'City', 'Route', 'Cave', 'Sea', 'Island', 'Forest', 'Building', 'Other']
 const DIRECTIONS = ['N', 'S', 'E', 'W', 'NE', 'SE', 'SW', 'NW', 'Via']
@@ -14,6 +15,7 @@ function getShapes(area) {
 }
 
 export default function MapEditor({ mapData, gameId, onClose, onSave }) {
+  const { alert } = useDialog()
   const [areas, setAreas] = useState(() =>
     (mapData?.areas || []).map(a => {
       const poly = a.polygon ? a.polygon.map(p => [...p]) : []
@@ -485,7 +487,7 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
           setAreas(data.areas)
         }
       } catch {
-        alert('Invalid JSON file')
+        alert('The selected file contains invalid JSON and could not be loaded.', { title: 'Invalid File', type: 'error' })
       }
     }
     reader.readAsText(file)

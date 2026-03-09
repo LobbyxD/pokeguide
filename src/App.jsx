@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { DialogProvider } from './components/Dialog.jsx'
 import TitleBar from './components/TitleBar.jsx'
 import Sidebar from './components/Sidebar.jsx'
 import OptionsModal from './components/OptionsModal.jsx'
@@ -153,12 +154,16 @@ export default function App() {
   const handleSaveGames = (newGames) => {
     setGames(newGames)
     localStorage.setItem('pg_games', JSON.stringify(newGames))
-    // Update selectedGame if it was modified
+    // Only update selectedGame if it was removed or its color changed (avoid unnecessary re-renders while editing)
     if (selectedGame) {
       const updated = newGames.find(g => g.id === selectedGame.id)
-      if (updated) setSelectedGame(updated)
-      else if (newGames.length > 0) setSelectedGame(newGames[0])
-      else setSelectedGame(null)
+      if (!updated) {
+        setSelectedGame(newGames.length > 0 ? newGames[0] : null)
+      } else if (updated.color !== selectedGame.color) {
+        setSelectedGame(updated)
+      }
+    } else if (newGames.length > 0) {
+      setSelectedGame(newGames[0])
     }
   }
 
@@ -191,6 +196,7 @@ export default function App() {
   }
 
   return (
+    <DialogProvider>
     <div className="app-layout">
       <TitleBar />
       <div className="app-body">
@@ -257,6 +263,7 @@ export default function App() {
         </div>
       )}
     </div>
+    </DialogProvider>
   )
 }
 

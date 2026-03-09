@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { X } from './Icons.jsx'
+import { useDialog } from './Dialog.jsx'
 
 const THEMES = [
   { id: '', label: 'Dark', description: 'Classic deep navy dark theme' },
@@ -25,6 +26,7 @@ function hexToRgba(hex, alpha = 1) {
 }
 
 export default function OptionsModal({ onClose, onThemeChange }) {
+  const { confirm } = useDialog()
   const [activeTab, setActiveTab] = useState('appearance')
   const [theme, setTheme] = useState('')
   const [mapSettings, setMapSettings] = useState({
@@ -86,8 +88,13 @@ export default function OptionsModal({ onClose, onThemeChange }) {
     }
   }
 
-  const handleResetAll = () => {
-    if (window.confirm('Reset all settings? This cannot be undone.')) {
+  const handleResetAll = async () => {
+    const ok = await confirm('All appearance and map settings will be reset to their defaults.', {
+      title: 'Reset All Settings',
+      danger: true,
+      confirmLabel: 'Reset',
+    })
+    if (ok) {
       localStorage.removeItem('pg_settings')
       localStorage.removeItem('pg_map_settings')
       document.body.removeAttribute('data-theme')

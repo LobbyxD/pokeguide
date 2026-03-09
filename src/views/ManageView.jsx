@@ -1,6 +1,64 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, X, ChevronUp, ChevronDown, Check, Loader, Sparkles, Settings, Map } from '../components/Icons.jsx'
+import { Plus, X, ChevronUp, ChevronDown, Check, Loader, Sparkles, Settings, Map, Download, Upload, Package, FolderOpen } from '../components/Icons.jsx'
 import { mapData as defaultMapData } from '../data/index.js'
+import { useDialog } from '../components/Dialog.jsx'
+
+const SLUG_TO_TOTAL = {
+  // Gen 1
+  red: 151, blue: 151, yellow: 151, firered: 151, leafgreen: 151,
+  // Gen 2
+  gold: 251, silver: 251, crystal: 251, heartgold: 251, soulsilver: 251,
+  // Gen 3
+  ruby: 386, sapphire: 386, emerald: 386,
+  // Gen 4
+  diamond: 493, pearl: 493, platinum: 493,
+  // Gen 5
+  black: 649, white: 649, 'black-2': 649, 'white-2': 649,
+  // Gen 6
+  x: 721, y: 721, 'omega-ruby': 721, 'alpha-sapphire': 721,
+  // Gen 7
+  sun: 802, moon: 802, 'ultra-sun': 807, 'ultra-moon': 807,
+  // Gen 8
+  sword: 898, shield: 898, 'brilliant-diamond': 898, 'shining-pearl': 898,
+  // Gen 9
+  scarlet: 1025, violet: 1025,
+}
+
+const SLUG_TO_GEN = {
+  // Gen 1
+  red: 1, blue: 1, yellow: 1, firered: 1, leafgreen: 1,
+  // Gen 2
+  gold: 2, silver: 2, crystal: 2, heartgold: 2, soulsilver: 2,
+  // Gen 3
+  ruby: 3, sapphire: 3, emerald: 3,
+  // Gen 4
+  diamond: 4, pearl: 4, platinum: 4,
+  // Gen 5
+  black: 5, white: 5, 'black-2': 5, 'white-2': 5,
+  // Gen 6
+  x: 6, y: 6, 'omega-ruby': 6, 'alpha-sapphire': 6,
+  // Gen 7
+  sun: 7, moon: 7, 'ultra-sun': 7, 'ultra-moon': 7,
+  // Gen 8
+  sword: 8, shield: 8, 'brilliant-diamond': 8, 'shining-pearl': 8,
+  // Gen 9
+  scarlet: 9, violet: 9,
+}
+
+const GEN_TO_TOTAL = { 1: 151, 2: 251, 3: 386, 4: 493, 5: 649, 6: 721, 7: 807, 8: 898, 9: 1025 }
+
+function detectGeneration(versionSlug) {
+  if (!versionSlug) return null
+  return SLUG_TO_GEN[versionSlug.toLowerCase().trim()] ?? null
+}
+
+function detectTotal(versionSlug, generation) {
+  if (versionSlug) {
+    const slug = versionSlug.toLowerCase().trim()
+    if (SLUG_TO_TOTAL[slug] !== undefined) return SLUG_TO_TOTAL[slug]
+  }
+  return GEN_TO_TOTAL[generation] || 151
+}
 
 const GAME_TEMPLATE = {
   id: '',
@@ -9,12 +67,12 @@ const GAME_TEMPLATE = {
   generation: 1,
   color: '#e53e3e',
   pokedexFile: '',
-  totalPokemon: 151,
   versionSlug: '',
   steps: [],
 }
 
 export default function ManageView({ games, selectedGame, onSaveGames, onSelectGame }) {
+  const { confirm, alert } = useDialog()
   const [activeGame, setActiveGame] = useState(selectedGame || games[0] || null)
   const [activeTab, setActiveTab] = useState('game')
   const [editingStepIdx, setEditingStepIdx] = useState(null)
@@ -27,6 +85,21 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
   const [aiGenerating, setAiGenerating] = useState(false)
   const [aiPromptText, setAiPromptText] = useState('')
   const [aiResult, setAiResult] = useState(null)
+  const [addingNew, setAddingNew] = useState(false)
+  const [presets, setPresets] = useState([])
+  const [dataDir, setDataDir] = useState(null)
+  const [presetBusy, setPresetBusy] = useState(false)
+
+  // Load presets list and dataDir once
+  useEffect(() => {
+    if (!window.electronAPI) return
+    window.electronAPI.listPresets().then(setPresets).catch(() => {})
+    window.electronAPI.getPokemonDataDir().then(setDataDir).catch(() => {})
+  }, [])
+
+  const refreshPresets = () => {
+    if (window.electronAPI) window.electronAPI.listPresets().then(setPresets).catch(() => {})
+  }
 
   // Load map areas for the active game (for location autocomplete)
   useEffect(() => {
@@ -39,6 +112,24 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
       setMapAreas(defaultMapData[activeGame.id]?.areas || [])
     }
   }, [activeGame?.id])
+
+  // Auto-detect generation and totalPokemon from versionSlug
+  useEffect(() => {
+    if (!activeGame) return
+    const updates = {}
+    const detectedGen = detectGeneration(activeGame.versionSlug)
+    if (detectedGen !== null && detectedGen !== activeGame.generation) {
+      updates.generation = detectedGen
+    }
+    const gen = detectedGen ?? activeGame.generation
+    const detectedTotal = detectTotal(activeGame.versionSlug, gen)
+    if (detectedTotal !== activeGame.totalPokemon) {
+      updates.totalPokemon = detectedTotal
+    }
+    if (Object.keys(updates).length > 0) {
+      updateGame(activeGame.id, updates)
+    }
+  }, [activeGame?.id, activeGame?.versionSlug])
 
   const getLocSuggestions = (query) => {
     if (!query) return []
@@ -55,14 +146,48 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
   }
 
   const addGame = () => {
+    refreshPresets()
+    setAddingNew(true)
+  }
+
+  const createBlankGame = () => {
     const id = `custom-game-${Date.now()}`
     const newGame = { ...GAME_TEMPLATE, id, title: 'New Game ' + (games.length + 1) }
     onSaveGames([...games, newGame])
     setActiveGame(newGame)
+    setAddingNew(false)
   }
 
-  const deleteGame = (gameId) => {
-    if (!window.confirm('Delete this game? This cannot be undone.')) return
+  const createFromPreset = async (preset) => {
+    setPresetBusy(true)
+    try {
+      const id = `custom-game-${Date.now()}`
+      const gameData = { ...GAME_TEMPLATE, ...preset.game, id }
+      const newGames = [...games, gameData]
+      onSaveGames(newGames)
+      if (preset.map) {
+        localStorage.setItem(`pg_map_${id}`, JSON.stringify(preset.map))
+      }
+      if (preset.pokedex && dataDir && gameData.pokedexFile) {
+        const path = `${dataDir}/${gameData.pokedexFile}.json`
+        await window.electronAPI.writeFile(path, JSON.stringify(preset.pokedex, null, 2))
+        localStorage.removeItem(`pg_pokedex_${id}`)
+      }
+      setActiveGame(gameData)
+      setAddingNew(false)
+    } catch (e) {
+      await alert(e.message, { title: 'Failed to Create Game', type: 'error' })
+    }
+    setPresetBusy(false)
+  }
+
+  const deleteGame = async (gameId) => {
+    const ok = await confirm('This game and all its steps will be permanently removed.', {
+      title: 'Delete Game',
+      danger: true,
+      confirmLabel: 'Delete',
+    })
+    if (!ok) return
     const newGames = games.filter(g => g.id !== gameId)
     onSaveGames(newGames)
     if (activeGame?.id === gameId) {
@@ -150,14 +275,18 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
         .filter(l => l.length >= 10)
       setAiResult(lines)
     } catch (e) {
-      alert('AI generation failed: ' + e.message)
+      await alert(e.message, { title: 'AI Generation Failed', type: 'error' })
     }
     setAiGenerating(false)
   }
 
-  const confirmAiResult = () => {
+  const confirmAiResult = async () => {
     if (!aiResult || !activeGame) return
-    if (window.confirm(`Replace all steps with ${aiResult.length} AI-generated steps?`)) {
+    const ok = await confirm(`Apply ${aiResult.length} AI-generated steps? This will replace all existing steps.`, {
+      title: 'Apply AI Steps',
+      confirmLabel: 'Apply',
+    })
+    if (ok) {
       updateGame(activeGame.id, { steps: aiResult })
       setAiResult(null)
     }
@@ -166,6 +295,142 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
   const selectAndSet = (game) => {
     setActiveGame(game)
     onSelectGame(game)
+    setAddingNew(false)
+  }
+
+  // --- Export helpers ---
+  const buildMapData = (gameId) => {
+    try {
+      const stored = localStorage.getItem(`pg_map_${gameId}`)
+      if (stored) return JSON.parse(stored)
+      const def = defaultMapData[gameId]
+      return def ? { areas: def.areas, width: def.width, height: def.height } : null
+    } catch { return null }
+  }
+
+  const exportFull = async () => {
+    if (!activeGame || !window.electronAPI) return
+    setPresetBusy(true)
+    try {
+      let pokedex = null
+      if (dataDir && activeGame.pokedexFile) {
+        pokedex = await window.electronAPI.readPokemonFile(dataDir, activeGame.pokedexFile + '.json')
+      }
+      const preset = {
+        presetVersion: 1,
+        type: 'full',
+        name: activeGame.title,
+        game: { ...activeGame },
+        map: buildMapData(activeGame.id),
+        steps: { steps: activeGame.steps || [], stepLocs: activeGame.stepLocs || {} },
+        pokedex,
+      }
+      const safeName = activeGame.title.replace(/[^a-z0-9]/gi, '_')
+      await window.electronAPI.exportPreset(preset, safeName)
+      refreshPresets()
+    } catch (e) { await alert(e.message, { title: 'Export Failed', type: 'error' }) }
+    setPresetBusy(false)
+  }
+
+  const exportMap = async () => {
+    if (!activeGame || !window.electronAPI) return
+    const map = buildMapData(activeGame.id)
+    if (!map) { await alert('No map data found for this game.', { title: 'Nothing to Export' }); return }
+    const preset = { presetVersion: 1, type: 'map', name: activeGame.title + ' Map', game: { id: activeGame.id, title: activeGame.title }, map }
+    const safeName = activeGame.title.replace(/[^a-z0-9]/gi, '_') + '_map'
+    await window.electronAPI.exportPreset(preset, safeName)
+    refreshPresets()
+  }
+
+  const exportSteps = async () => {
+    if (!activeGame || !window.electronAPI) return
+    if (!(activeGame.steps || []).length) { await alert('This game has no steps to export.', { title: 'Nothing to Export' }); return }
+    const preset = {
+      presetVersion: 1, type: 'steps', name: activeGame.title + ' Steps',
+      game: { id: activeGame.id, title: activeGame.title },
+      steps: { steps: activeGame.steps || [], stepLocs: activeGame.stepLocs || {} },
+    }
+    const safeName = activeGame.title.replace(/[^a-z0-9]/gi, '_') + '_steps'
+    await window.electronAPI.exportPreset(preset, safeName)
+    refreshPresets()
+  }
+
+  const exportPokedex = async () => {
+    if (!activeGame || !window.electronAPI || !dataDir || !activeGame.pokedexFile) {
+      await alert('Set a Pokédex File name for this game before exporting.', { title: 'Nothing to Export' })
+      return
+    }
+    setPresetBusy(true)
+    try {
+      const pokedex = await window.electronAPI.readPokemonFile(dataDir, activeGame.pokedexFile + '.json')
+      if (!pokedex) { await alert('No Pokédex data found. Generate it first.', { title: 'Nothing to Export' }); setPresetBusy(false); return }
+      const preset = {
+        presetVersion: 1, type: 'pokedex', name: activeGame.title + ' Pokédex',
+        game: { id: activeGame.id, title: activeGame.title, pokedexFile: activeGame.pokedexFile, totalPokemon: activeGame.totalPokemon },
+        pokedex,
+      }
+      const safeName = activeGame.title.replace(/[^a-z0-9]/gi, '_') + '_pokedex'
+      await window.electronAPI.exportPreset(preset, safeName)
+      refreshPresets()
+    } catch (e) { await alert(e.message, { title: 'Export Failed', type: 'error' }) }
+    setPresetBusy(false)
+  }
+
+  // --- Import helpers ---
+  const importFull = async () => {
+    if (!activeGame || !window.electronAPI) return
+    const preset = await window.electronAPI.importPreset()
+    if (!preset) return
+    if (preset.type !== 'full') { await alert(`This file is a "${preset.type}" preset, not a full preset.`, { title: 'Wrong Preset Type' }); return }
+    const merge = { ...(preset.game || {}), id: activeGame.id, title: activeGame.title }
+    delete merge.steps
+    delete merge.stepLocs
+    if (preset.steps) merge.steps = preset.steps.steps || []
+    if (preset.steps) merge.stepLocs = preset.steps.stepLocs || {}
+    updateGame(activeGame.id, merge)
+    if (preset.map) localStorage.setItem(`pg_map_${activeGame.id}`, JSON.stringify(preset.map))
+    if (preset.pokedex && dataDir) {
+      const pFile = merge.pokedexFile || activeGame.pokedexFile
+      if (pFile) {
+        await window.electronAPI.writeFile(`${dataDir}/${pFile}.json`, JSON.stringify(preset.pokedex, null, 2))
+        localStorage.removeItem(`pg_pokedex_${activeGame.id}`)
+      }
+    }
+    refreshPresets()
+  }
+
+  const importMap = async () => {
+    if (!activeGame || !window.electronAPI) return
+    const preset = await window.electronAPI.importPreset()
+    if (!preset) return
+    if (!preset.map) { await alert('This preset does not contain map data.', { title: 'No Map Data' }); return }
+    localStorage.setItem(`pg_map_${activeGame.id}`, JSON.stringify(preset.map))
+    setMapAreas(preset.map.areas || [])
+  }
+
+  const importSteps = async () => {
+    if (!activeGame || !window.electronAPI) return
+    const preset = await window.electronAPI.importPreset()
+    if (!preset) return
+    if (!preset.steps) { await alert('This preset does not contain step data.', { title: 'No Step Data' }); return }
+    const ok = await confirm(`Replace all steps with ${(preset.steps.steps || []).length} imported steps?`, {
+      title: 'Import Steps',
+      confirmLabel: 'Import',
+    })
+    if (!ok) return
+    updateGame(activeGame.id, { steps: preset.steps.steps || [], stepLocs: preset.steps.stepLocs || {} })
+  }
+
+  const importPokedex = async () => {
+    if (!activeGame || !window.electronAPI || !dataDir) return
+    const preset = await window.electronAPI.importPreset()
+    if (!preset) return
+    if (!preset.pokedex) { await alert('This preset does not contain Pokédex data.', { title: 'No Pokédex Data' }); return }
+    const pFile = activeGame.pokedexFile
+    if (!pFile) { await alert('Set a Pokédex File name for this game before importing.', { title: 'Missing Config' }); return }
+    await window.electronAPI.writeFile(`${dataDir}/${pFile}.json`, JSON.stringify(preset.pokedex, null, 2))
+    localStorage.removeItem(`pg_pokedex_${activeGame.id}`)
+    await alert(`${preset.pokedex.length} Pokémon imported successfully.`, { title: 'Pokédex Imported', type: 'success' })
   }
 
   return (
@@ -174,7 +439,7 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
       <div style={styles.leftPanel}>
         <div style={styles.leftHeader}>
           <span style={styles.leftTitle}>Games</span>
-          <button style={{ ...styles.addBtn, display: 'flex', alignItems: 'center', gap: 4 }} onClick={addGame}><Plus size={12} /> Add</button>
+          <button style={{ ...styles.addBtn, display: 'flex', alignItems: 'center', gap: 4, ...(addingNew ? { opacity: 0.6 } : {}) }} onClick={addGame}><Plus size={12} /> Add</button>
         </div>
         <div style={styles.gameList}>
           {games.map(game => (
@@ -205,7 +470,81 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
       </div>
 
       {/* Right panel */}
-      <div style={styles.rightPanel}>
+      <div style={{ ...styles.rightPanel, position: 'relative' }}>
+
+        {/* Preset picker — rendered as overlay so the form behind stays mounted */}
+        {addingNew && (
+          <div style={styles.presetOverlay}>
+            <div style={styles.presetPanel}>
+              <div style={styles.presetPanelHeader}>
+                <span style={styles.rightTitle}>New Game</span>
+                <button style={styles.cancelStepBtn} onClick={() => setAddingNew(false)}><X size={13} /></button>
+              </div>
+              <div style={styles.presetPanelContent}>
+                {/* Blank game */}
+                <button style={styles.blankPresetBtn} onClick={createBlankGame}>
+                  <Plus size={18} />
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>Blank Game</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Start with no data</span>
+                </button>
+
+                {/* Preset list */}
+                {presets.length > 0 && (
+                  <>
+                    <div style={styles.presetSectionLabel}>Saved Presets</div>
+                    <div style={styles.presetGrid}>
+                      {presets.map(p => (
+                        <button
+                          key={p.filename}
+                          style={styles.presetCard}
+                          disabled={presetBusy}
+                          onClick={async () => {
+                            const data = await window.electronAPI.readPreset(p.filename)
+                            if (data) createFromPreset(data)
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Package size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                            <span style={{ fontWeight: 600, fontSize: 13, flex: 1, textAlign: 'left' }}>{p.title || p.name}</span>
+                            <span style={styles.presetTypeBadge}>{p.type}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {/* Import from file */}
+                <div style={styles.presetSectionLabel}>Import from File</div>
+                <button
+                  style={{ ...styles.blankPresetBtn, flexDirection: 'row', gap: 10, justifyContent: 'flex-start', padding: '14px 16px' }}
+                  disabled={presetBusy}
+                  onClick={async () => {
+                    const preset = await window.electronAPI.importPreset()
+                    if (preset) createFromPreset(preset)
+                  }}
+                >
+                  <Upload size={16} />
+                  <div style={{ textAlign: 'left' }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Import Preset File</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Load a .pgpreset file from anywhere</div>
+                  </div>
+                </button>
+
+                {presets.length > 0 && (
+                  <button
+                    style={{ ...styles.blankPresetBtn, flexDirection: 'row', gap: 10, justifyContent: 'flex-start', padding: '10px 16px', opacity: 0.7 }}
+                    onClick={() => window.electronAPI?.getPresetsDir().then(dir => window.electronAPI.openPath(dir))}
+                  >
+                    <FolderOpen size={14} />
+                    <span style={{ fontSize: 12 }}>Open presets folder</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeGame ? (
           <>
             <div style={styles.rightHeader}>
@@ -284,21 +623,55 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
                     </div>
                     <div style={styles.formField}>
                       <label style={styles.label}>Total Pokémon</label>
-                      <input
-                        type="number"
-                        style={styles.input}
-                        value={activeGame.totalPokemon || 151}
-                        onChange={e => handleFieldChange('totalPokemon', parseInt(e.target.value))}
-                      />
+                      <div style={{ ...styles.input, color: 'var(--text-muted)', cursor: 'default', userSelect: 'none' }}>
+                        {detectTotal(activeGame.versionSlug, detectGeneration(activeGame.versionSlug) ?? activeGame.generation)}
+                        <span style={{ fontSize: 11, marginLeft: 6, opacity: 0.6 }}>auto-detected</span>
+                      </div>
                     </div>
                     <div style={styles.formField}>
                       <label style={styles.label}>Generation</label>
-                      <input
-                        type="number"
-                        style={styles.input}
-                        value={activeGame.generation || 1}
-                        onChange={e => handleFieldChange('generation', parseInt(e.target.value))}
-                      />
+                      <div style={{ ...styles.input, color: 'var(--text-muted)', cursor: 'default', userSelect: 'none' }}>
+                        {activeGame.generation || 1}
+                        <span style={{ fontSize: 11, marginLeft: 6, opacity: 0.6 }}>auto-detected</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Export / Import */}
+                  <div style={styles.exportSection}>
+                    <div style={styles.exportRow}>
+                      <span style={styles.exportLabel}>Export</span>
+                      <div style={styles.exportBtns}>
+                        <button style={styles.exportBtn} onClick={exportFull} disabled={presetBusy} title="Export everything as a full preset">
+                          <Download size={11} /> Full
+                        </button>
+                        <button style={styles.exportBtn} onClick={exportMap} disabled={presetBusy} title="Export map + areas">
+                          <Download size={11} /> Map
+                        </button>
+                        <button style={styles.exportBtn} onClick={exportSteps} disabled={presetBusy} title="Export steps + locations">
+                          <Download size={11} /> Steps
+                        </button>
+                        <button style={styles.exportBtn} onClick={exportPokedex} disabled={presetBusy} title="Export Pokédex data">
+                          <Download size={11} /> Pokédex
+                        </button>
+                      </div>
+                    </div>
+                    <div style={styles.exportRow}>
+                      <span style={styles.exportLabel}>Import</span>
+                      <div style={styles.exportBtns}>
+                        <button style={styles.importBtn} onClick={importFull} disabled={presetBusy} title="Import full preset into this game">
+                          <Upload size={11} /> Full
+                        </button>
+                        <button style={styles.importBtn} onClick={importMap} disabled={presetBusy} title="Replace map data">
+                          <Upload size={11} /> Map
+                        </button>
+                        <button style={styles.importBtn} onClick={importSteps} disabled={presetBusy} title="Replace steps">
+                          <Upload size={11} /> Steps
+                        </button>
+                        <button style={styles.importBtn} onClick={importPokedex} disabled={presetBusy} title="Replace Pokédex data">
+                          <Upload size={11} /> Pokédex
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -457,7 +830,7 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
             <div style={{ fontSize: 40, marginBottom: 12, color: 'var(--text-muted)' }}><Settings size={40} /></div>
             <div style={{ fontWeight: 600 }}>No game selected</div>
             <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 6 }}>
-              Select a game or add a new one
+              Select a game or click Add to get started
             </div>
           </div>
         )}
@@ -956,5 +1329,143 @@ const styles = {
     padding: '1px 7px',
     fontSize: 10,
     fontWeight: 500,
+  },
+  // Export/Import section
+  exportSection: {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 10,
+    padding: '12px 16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    marginBottom: 16,
+  },
+  exportRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+  },
+  exportLabel: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    fontWeight: 600,
+    width: 48,
+    flexShrink: 0,
+  },
+  exportBtns: {
+    display: 'flex',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  exportBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 5,
+    color: 'var(--text-secondary)',
+    padding: '5px 10px',
+    fontSize: 11,
+    fontWeight: 500,
+    cursor: 'pointer',
+  },
+  importBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 5,
+    color: 'var(--game-color)',
+    padding: '5px 10px',
+    fontSize: 11,
+    fontWeight: 500,
+    cursor: 'pointer',
+  },
+  // Preset picker overlay
+  presetOverlay: {
+    position: 'absolute',
+    inset: 0,
+    background: 'var(--bg-primary)',
+    zIndex: 10,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  presetPanel: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  presetPanelHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '14px 20px',
+    borderBottom: '1px solid var(--border-color)',
+    background: 'var(--bg-secondary)',
+    flexShrink: 0,
+  },
+  presetPanelContent: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: 20,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+  },
+  blankPresetBtn: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    background: 'var(--bg-card)',
+    border: '2px dashed var(--border-color)',
+    borderRadius: 10,
+    padding: '20px 16px',
+    cursor: 'pointer',
+    color: 'var(--text-primary)',
+    transition: 'border-color 0.15s, background 0.15s',
+    width: '100%',
+    textAlign: 'center',
+  },
+  presetSectionLabel: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    fontWeight: 600,
+    marginTop: 6,
+  },
+  presetGrid: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  presetCard: {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 8,
+    padding: '12px 14px',
+    cursor: 'pointer',
+    color: 'var(--text-primary)',
+    width: '100%',
+    transition: 'border-color 0.15s, background 0.15s',
+  },
+  presetTypeBadge: {
+    fontSize: 10,
+    padding: '2px 7px',
+    background: 'var(--bg-tertiary)',
+    borderRadius: 8,
+    color: 'var(--text-muted)',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    flexShrink: 0,
   },
 }

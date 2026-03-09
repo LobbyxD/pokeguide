@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { ChevronLeft, ChevronRight, RotateCcw, Check, Play } from '../components/Icons.jsx'
 import { writeStorage } from '../utils/store.js'
+import { useDialog } from '../components/Dialog.jsx'
 
 export default function WalkthroughView({ game, games, onSaveGames }) {
+  const { confirm } = useDialog()
   const [currentStep, setCurrentStep] = useState(0)
   const activeRef = useRef(null)
 
@@ -25,8 +27,9 @@ export default function WalkthroughView({ game, games, onSaveGames }) {
     if (game && currentStep < game.steps.length - 1) saveStep(currentStep + 1)
   }
 
-  const handleReset = () => {
-    if (window.confirm('Reset progress for this game?')) saveStep(0)
+  const handleReset = async () => {
+    const ok = await confirm('Reset your progress back to step 1?', { title: 'Reset Progress' })
+    if (ok) saveStep(0)
   }
 
   const handleFinish = () => {

@@ -40,4 +40,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
   openPath: (p) => ipcRenderer.invoke('open-path', p),
+
+  getPresetsDir: () => ipcRenderer.invoke('get-presets-dir'),
+  listPresets: () => ipcRenderer.invoke('list-presets'),
+  savePreset: (name, data) => ipcRenderer.invoke('save-preset', { name, data }),
+  exportPreset: (data, defaultName) => ipcRenderer.invoke('export-preset', { data, defaultName }),
+  importPreset: () => ipcRenderer.invoke('import-preset'),
+  readPreset: (filename) => ipcRenderer.invoke('read-preset', filename),
+  deletePreset: (filename) => ipcRenderer.invoke('delete-preset', filename),
+  writeFile: (filePath, content) => ipcRenderer.invoke('write-file', { filePath, content }),
 })
