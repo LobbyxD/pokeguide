@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
-import { Plus, X, ChevronUp, ChevronDown, Check, Loader, Sparkles, Settings } from '../components/Icons.jsx'
+import React, { useState, useEffect } from 'react'
+import { Plus, X, ChevronUp, ChevronDown, Check, Loader, Sparkles, Settings, Map } from '../components/Icons.jsx'
+import { mapData as defaultMapData } from '../data/index.js'
 
 const GAME_TEMPLATE = {
   id: '',
@@ -18,10 +19,32 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
   const [activeTab, setActiveTab] = useState('game')
   const [editingStepIdx, setEditingStepIdx] = useState(null)
   const [editingStepText, setEditingStepText] = useState('')
+  const [editingStepLoc, setEditingStepLoc] = useState('')
+  const [locInput, setLocInput] = useState('')
+  const [locOpen, setLocOpen] = useState(false)
+  const [mapAreas, setMapAreas] = useState([])
   const [newStepText, setNewStepText] = useState('')
   const [aiGenerating, setAiGenerating] = useState(false)
   const [aiPromptText, setAiPromptText] = useState('')
   const [aiResult, setAiResult] = useState(null)
+
+  // Load map areas for the active game (for location autocomplete)
+  useEffect(() => {
+    if (!activeGame) { setMapAreas([]); return }
+    try {
+      const stored = localStorage.getItem(`pg_map_${activeGame.id}`)
+      const areas = stored ? JSON.parse(stored).areas : defaultMapData[activeGame.id]?.areas
+      setMapAreas(areas || [])
+    } catch {
+      setMapAreas(defaultMapData[activeGame.id]?.areas || [])
+    }
+  }, [activeGame?.id])
+
+  const getLocSuggestions = (query) => {
+    if (!query) return []
+    const q = query.toLowerCase()
+    return mapAreas.filter(a => a.name && a.name.toLowerCase().includes(q)).map(a => a.name).slice(0, 7)
+  }
 
   const updateGame = (id, updates) => {
     const newGames = games.map(g => g.id === id ? { ...g, ...updates } : g)
@@ -62,7 +85,15 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
   const deleteStep = (idx) => {
     if (!activeGame) return
     const newSteps = activeGame.steps.filter((_, i) => i !== idx)
-    updateGame(activeGame.id, { steps: newSteps })
+    // Shift stepLocs indices after the deleted one
+    const oldLocs = activeGame.stepLocs || {}
+    const newStepLocs = {}
+    for (const [k, v] of Object.entries(oldLocs)) {
+      const ki = parseInt(k)
+      if (ki === idx) continue
+      newStepLocs[ki > idx ? ki - 1 : ki] = v
+    }
+    updateGame(activeGame.id, { steps: newSteps, stepLocs: newStepLocs })
     if (editingStepIdx === idx) setEditingStepIdx(null)
   }
 
@@ -74,21 +105,37 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
     const tmp = steps[idx]
     steps[idx] = steps[newIdx]
     steps[newIdx] = tmp
-    updateGame(activeGame.id, { steps })
+    // Swap stepLocs alongside steps
+    const newStepLocs = { ...(activeGame.stepLocs || {}) }
+    const tmpLoc = newStepLocs[idx]
+    if (newStepLocs[newIdx] !== undefined) { newStepLocs[idx] = newStepLocs[newIdx] } else { delete newStepLocs[idx] }
+    if (tmpLoc !== undefined) { newStepLocs[newIdx] = tmpLoc } else { delete newStepLocs[newIdx] }
+    updateGame(activeGame.id, { steps, stepLocs: newStepLocs })
     if (editingStepIdx === idx) setEditingStepIdx(newIdx)
   }
 
   const startEditStep = (idx) => {
     setEditingStepIdx(idx)
     setEditingStepText(activeGame.steps[idx])
+    const loc = activeGame.stepLocs?.[idx] || ''
+    setEditingStepLoc(loc)
+    setLocInput(loc)
   }
 
   const saveEditStep = () => {
     if (editingStepIdx === null || !activeGame) return
     const newSteps = activeGame.steps.map((s, i) => i === editingStepIdx ? editingStepText : s)
-    updateGame(activeGame.id, { steps: newSteps })
+    const newStepLocs = { ...(activeGame.stepLocs || {}) }
+    if (editingStepLoc.trim()) {
+      newStepLocs[editingStepIdx] = editingStepLoc.trim()
+    } else {
+      delete newStepLocs[editingStepIdx]
+    }
+    updateGame(activeGame.id, { steps: newSteps, stepLocs: newStepLocs })
     setEditingStepIdx(null)
     setEditingStepText('')
+    setEditingStepLoc('')
+    setLocInput('')
   }
 
   const handleAiGenerate = async () => {
@@ -97,9 +144,7 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
     setAiGenerating(true)
     setAiResult(null)
     try {
-      const url = `https://text.pollinations.ai/${encodeURIComponent(prompt)}`
-      const resp = await fetch(url)
-      const text = await resp.text()
+      const text = await window.electronAPI.generateAiText(prompt)
       const lines = text.split('\n')
         .map(l => l.replace(/^\d+[\.\)]\s*/, '').trim())
         .filter(l => l.length >= 10)
@@ -318,23 +363,69 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
                         {editingStepIdx === idx ? (
                           <div style={styles.stepEditRow}>
                             <span style={styles.stepIdxBadge}>{idx + 1}</span>
-                            <textarea
-                              style={styles.stepTextarea}
-                              value={editingStepText}
-                              onChange={e => setEditingStepText(e.target.value)}
-                              autoFocus
-                              onKeyDown={e => {
-                                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEditStep() }
-                                if (e.key === 'Escape') setEditingStepIdx(null)
-                              }}
-                            />
-                            <button style={{ ...styles.saveStepBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={saveEditStep}><Check size={12} /></button>
-                            <button style={{ ...styles.cancelStepBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setEditingStepIdx(null)}><X size={12} /></button>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <textarea
+                                style={styles.stepTextarea}
+                                value={editingStepText}
+                                onChange={e => setEditingStepText(e.target.value)}
+                                autoFocus
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEditStep() }
+                                  if (e.key === 'Escape') setEditingStepIdx(null)
+                                }}
+                              />
+                              {/* Map location picker */}
+                              <div style={{ position: 'relative' }}>
+                                <div style={styles.locInputWrapper}>
+                                  <Map size={11} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                                  <input
+                                    style={styles.locInput}
+                                    placeholder={mapAreas.length ? 'Map location...' : 'No map data for this game'}
+                                    value={locInput}
+                                    disabled={!mapAreas.length}
+                                    onChange={e => { setLocInput(e.target.value); setEditingStepLoc(e.target.value); setLocOpen(true) }}
+                                    onFocus={() => setLocOpen(true)}
+                                    onBlur={() => setTimeout(() => setLocOpen(false), 120)}
+                                    onKeyDown={e => { if (e.key === 'Escape') { setLocInput(''); setEditingStepLoc(''); setLocOpen(false) } }}
+                                  />
+                                  {editingStepLoc && (
+                                    <button
+                                      style={styles.locClearBtn}
+                                      onMouseDown={e => { e.preventDefault(); setEditingStepLoc(''); setLocInput('') }}
+                                      title="Clear location"
+                                    ><X size={10} /></button>
+                                  )}
+                                </div>
+                                {locOpen && getLocSuggestions(locInput).length > 0 && (
+                                  <div style={styles.locDropdown}>
+                                    {getLocSuggestions(locInput).map(name => (
+                                      <button
+                                        key={name}
+                                        style={styles.locDropdownItem}
+                                        onMouseDown={e => { e.preventDefault(); setEditingStepLoc(name); setLocInput(name); setLocOpen(false) }}
+                                      >{name}</button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+                              <button style={{ ...styles.saveStepBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={saveEditStep}><Check size={12} /></button>
+                              <button style={{ ...styles.cancelStepBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setEditingStepIdx(null)}><X size={12} /></button>
+                            </div>
                           </div>
                         ) : (
                           <div style={styles.stepViewRow} onClick={() => startEditStep(idx)}>
                             <span style={styles.stepIdxBadge}>{idx + 1}</span>
-                            <span style={styles.stepText}>{step}</span>
+                            <div style={{ flex: 1 }}>
+                              <span style={styles.stepText}>{step}</span>
+                              {activeGame.stepLocs?.[idx] && (
+                                <div style={styles.stepLocChip}>
+                                  <Map size={10} style={{ flexShrink: 0 }} />
+                                  {activeGame.stepLocs[idx]}
+                                </div>
+                              )}
+                            </div>
                             <div style={styles.stepActions} onClick={e => e.stopPropagation()}>
                               <button style={{ ...styles.stepActionBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => moveStep(idx, -1)} disabled={idx === 0} title="Move up"><ChevronUp size={12} /></button>
                               <button style={{ ...styles.stepActionBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => moveStep(idx, 1)} disabled={idx === activeGame.steps.length - 1} title="Move down"><ChevronDown size={12} /></button>
@@ -799,5 +890,71 @@ const styles = {
     height: '100%',
     color: 'var(--text-secondary)',
     textAlign: 'center',
+  },
+  locInputWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 4,
+    padding: '3px 6px',
+  },
+  locInput: {
+    flex: 1,
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--text-primary)',
+    fontSize: 11,
+    outline: 'none',
+    minWidth: 0,
+  },
+  locClearBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    padding: 0,
+    display: 'flex',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  locDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 4,
+    zIndex: 50,
+    maxHeight: 160,
+    overflowY: 'auto',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.35)',
+  },
+  locDropdownItem: {
+    display: 'block',
+    width: '100%',
+    padding: '6px 10px',
+    background: 'transparent',
+    border: 'none',
+    borderBottom: '1px solid var(--border-color)',
+    color: 'var(--text-primary)',
+    fontSize: 12,
+    textAlign: 'left',
+    cursor: 'pointer',
+  },
+  stepLocChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 3,
+    background: 'var(--game-color)18',
+    color: 'var(--game-color)',
+    border: '1px solid var(--game-color)33',
+    borderRadius: 8,
+    padding: '1px 7px',
+    fontSize: 10,
+    fontWeight: 500,
   },
 }

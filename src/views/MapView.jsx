@@ -61,7 +61,9 @@ export default function MapView({ game, onNavigateToPokemon }) {
 
   const steps = game?.steps || []
   const currentStep = steps[currentStepIdx] || null
-  const currentStepLoc = game && stepLocations[game.id] ? stepLocations[game.id][currentStepIdx + 1] : null
+  // User-set location (area name) takes priority over static stepLocations (area id)
+  const currentStepLoc = game?.stepLocs?.[currentStepIdx]
+    || (game && stepLocations[game.id] ? stepLocations[game.id][currentStepIdx + 1] : null)
 
   // Load custom map data
   useEffect(() => {
@@ -94,7 +96,7 @@ export default function MapView({ game, onNavigateToPokemon }) {
   const getAreaVisuals = (area) => {
     const isSelected = selectedArea?.id === area.id
     const isHovered = hoveredArea?.id === area.id
-    const isCurrentLoc = area.id === currentStepLoc
+    const isCurrentLoc = area.id === currentStepLoc || area.name === currentStepLoc
     const color = AREA_COLORS[area.type] || '#a0aec0'
 
     if (isSelected) return { opacity: 1, fill: color + '55', stroke: '#ffffff', strokeWidth: 2.5 }
@@ -418,7 +420,7 @@ export default function MapView({ game, onNavigateToPokemon }) {
               </defs>
               {areas.map(area => {
                 const { opacity, fill } = getAreaVisuals(area)
-                const isCurrentLoc = area.id === currentStepLoc
+                const isCurrentLoc = area.id === currentStepLoc || area.name === currentStepLoc
                 const shapes = getShapes(area)
                 if (shapes.length === 0) return null
 

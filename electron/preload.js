@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdates: () => ipcRenderer.send('check-for-updates'),
   getPendingUpdate: () => ipcRenderer.invoke('get-pending-update'),
 
+  generateAiText: (prompt) => ipcRenderer.invoke('generate-ai-text', prompt),
+
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
   openPath: (p) => ipcRenderer.invoke('open-path', p),

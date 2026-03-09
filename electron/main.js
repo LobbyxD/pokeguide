@@ -3,6 +3,7 @@ const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const { spawn } = require('child_process')
 const fs = require('fs')
+const https = require('https')
 
 app.setAppUserModelId('com.pokeguide.app')
 
@@ -211,3 +212,63 @@ autoUpdater.on('error', (err) => {
 
 // Replay pending update info if renderer asks after the event already fired
 ipcMain.handle('get-pending-update', () => pendingUpdateInfo)
+
+// AI text generation via DuckDuckGo AI Chat (free, no auth)
+ipcMain.handle('generate-ai-text', (event, prompt) => {
+  return new Promise((resolve, reject) => {
+    // Step 1: get VQD token
+    const statusReq = https.request({
+      hostname: 'duckduckgo.com',
+      path: '/duckchat/v1/status',
+      method: 'GET',
+      headers: {
+        'x-vqd-accept': '1',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+      }
+    }, (res) => {
+      const vqd = res.headers['x-vqd-4']
+      res.resume() // drain response body
+      if (!vqd) { reject(new Error('Could not get AI session token')); return }
+
+      // Step 2: send chat request
+      const body = JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }]
+      })
+      const chatReq = https.request({
+        hostname: 'duckduckgo.com',
+        path: '/duckchat/v1/chat',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'x-vqd-4': vqd,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/event-stream',
+          'Origin': 'https://duckduckgo.com',
+          'Referer': 'https://duckduckgo.com/',
+        }
+      }, (res) => {
+        let result = ''
+        res.on('data', (chunk) => {
+          for (const line of chunk.toString().split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            const payload = line.slice(6).trim()
+            if (payload === '[DONE]') continue
+            try { result += JSON.parse(payload).message ?? '' } catch {}
+          }
+        })
+        res.on('end', () => {
+          if (!result) reject(new Error('Empty response from AI'))
+          else resolve(result)
+        })
+      })
+      chatReq.on('error', reject)
+      chatReq.write(body)
+      chatReq.end()
+    })
+    statusReq.on('error', reject)
+    statusReq.end()
+  })
+})
