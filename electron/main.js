@@ -48,10 +48,12 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow()
 
-  try {
-    autoUpdater.checkForUpdates()
-  } catch (e) {
-    console.log('Update check failed:', e.message)
+  if (app.isPackaged) {
+    try {
+      autoUpdater.checkForUpdates()
+    } catch (e) {
+      console.log('Update check failed:', e.message)
+    }
   }
 
   app.on('activate', () => {
@@ -131,6 +133,7 @@ ipcMain.on('restart-app', () => {
 })
 
 ipcMain.on('check-for-updates', () => {
+  if (!app.isPackaged) return
   try {
     autoUpdater.checkForUpdates()
   } catch (e) {

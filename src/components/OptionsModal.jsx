@@ -287,7 +287,7 @@ export default function OptionsModal({ onClose, onThemeChange }) {
           {activeTab === 'updates' && (
             <div style={styles.section}>
               <h3 style={styles.sectionTitle}>Updates</h3>
-              <p style={styles.para}>Current version: <strong>0.0.1</strong></p>
+              <p style={styles.para}>Current version: <strong>1.0.0</strong></p>
               {updateStatus && (
                 <div style={styles.updateStatus}>{updateStatus}</div>
               )}
@@ -335,7 +335,7 @@ export default function OptionsModal({ onClose, onThemeChange }) {
                 />
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 18 }}>PokeGuide</div>
-                  <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Version 0.0.1</div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Version 1.0.0</div>
                   <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>by R2D2 Games</div>
                 </div>
               </div>

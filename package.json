@@ -1,6 +1,6 @@
 {
   "name": "pokeguide",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Pokemon companion app",
   "main": "electron/main.js",
   "author": "R2D2 Games",
