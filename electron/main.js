@@ -186,7 +186,10 @@ ipcMain.handle('generate-pokemon', (event, { versionSlug, pokedexFile, totalPoke
 })
 
 // Auto-updater events
+let pendingUpdateInfo = null
+
 autoUpdater.on('update-available', (info) => {
+  pendingUpdateInfo = info
   win && win.webContents.send('update-available', info)
 })
 
@@ -201,3 +204,10 @@ autoUpdater.on('download-progress', (progress) => {
 autoUpdater.on('update-downloaded', () => {
   autoUpdater.quitAndInstall(true, true)
 })
+
+autoUpdater.on('error', (err) => {
+  console.error('Auto-updater error:', err.message)
+})
+
+// Replay pending update info if renderer asks after the event already fired
+ipcMain.handle('get-pending-update', () => pendingUpdateInfo)

@@ -51,6 +51,10 @@ export default function App() {
     if (!window.electronAPI) return
     window.electronAPI.onUpdateAvailable((info) => setUpdateInfo(info))
     window.electronAPI.onUpdateProgress((p) => setUpdateProgress(Math.round(p.percent)))
+    // Catch updates that fired before React mounted (race condition on startup)
+    window.electronAPI.getPendingUpdate().then((info) => {
+      if (info) setUpdateInfo(info)
+    })
   }, [])
 
   // Apply saved theme

@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startUpdate: () => ipcRenderer.send('start-update'),
   restartApp: () => ipcRenderer.send('restart-app'),
   checkForUpdates: () => ipcRenderer.send('check-for-updates'),
+  getPendingUpdate: () => ipcRenderer.invoke('get-pending-update'),
 
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),

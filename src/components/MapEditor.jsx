@@ -3,7 +3,7 @@ import { MousePointer, Square, Hand, Plus, Minus, Home, Image, Download, Upload,
 import { onStorageChange } from '../utils/store.js'
 
 const AREA_TYPES = ['Town', 'City', 'Route', 'Cave', 'Sea', 'Island', 'Forest', 'Building', 'Other']
-const DIRECTIONS = ['N', 'S', 'E', 'W', 'NE', 'SE', 'SW', 'NW']
+const DIRECTIONS = ['N', 'S', 'E', 'W', 'NE', 'SE', 'SW', 'NW', 'Via']
 const MAX_UNDO = 20
 
 // Returns all sub-shapes for an area (supports both legacy `polygon` and new `shapes` format)
@@ -32,6 +32,7 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
   const [pokemonSuggestions, setPokemonSuggestions] = useState([])
   const [allPokemon, setAllPokemon] = useState([])
   const [pokedexPokemon, setPokedexPokemon] = useState([])
+  const [connInputs, setConnInputs] = useState({}) // { dir: { value, open } } for autocomplete
   const [pokedexData, setPokedexData] = useState([]) // full data with locations
   const [imageOverride, setImageOverride] = useState(() =>
     mapData?.image?.startsWith?.('data:') ? mapData.image : null
@@ -355,6 +356,17 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
     const conns = { ...(selectedArea.connections || {}) }
     delete conns[dir]
     updateArea(selectedAreaId, { connections: conns })
+  }
+
+  // Area name suggestions for connection inputs
+  const getAreaSuggestions = (query) => {
+    if (!query || query.length < 1) return []
+    const q = query.toLowerCase()
+    const existingDests = new Set(Object.values(selectedArea?.connections || {}).filter(Boolean))
+    return areas
+      .filter(a => a.id !== selectedAreaId && a.name && a.name.toLowerCase().includes(q) && !existingDests.has(a.name))
+      .map(a => a.name)
+      .slice(0, 6)
   }
 
   // Auto-detect touching/nearby areas and suggest connections
@@ -697,18 +709,45 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
                   {/* Connections */}
                   <div style={styles.panelSection}>
                     <div style={styles.panelSectionTitle}>Connections</div>
-                    {Object.entries(selectedArea.connections || {}).map(([dir, dest]) => (
-                      <div key={dir} style={styles.connRow}>
-                        <span style={styles.connDir}>{dir}</span>
-                        <input
-                          style={{ ...styles.input, flex: 1 }}
-                          value={dest}
-                          placeholder="area name"
-                          onChange={e => setConnection(dir, e.target.value)}
-                        />
-                        <button style={{ ...styles.removeBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => removeConnection(dir)}><X size={12} /></button>
-                      </div>
-                    ))}
+                    {Object.entries(selectedArea.connections || {}).map(([dir, dest]) => {
+                      const connSuggs = connInputs[dir]?.open ? getAreaSuggestions(connInputs[dir]?.value ?? dest) : []
+                      return (
+                        <div key={dir} style={{ marginBottom: 6 }}>
+                          <div style={styles.connRow}>
+                            <span style={styles.connDir}>{dir}</span>
+                            <div style={{ flex: 1, position: 'relative' }}>
+                              <input
+                                style={{ ...styles.input, width: '100%' }}
+                                value={connInputs[dir]?.value ?? dest}
+                                placeholder="area name"
+                                onChange={e => {
+                                  setConnInputs(prev => ({ ...prev, [dir]: { value: e.target.value, open: true } }))
+                                  setConnection(dir, e.target.value)
+                                }}
+                                onFocus={() => setConnInputs(prev => ({ ...prev, [dir]: { value: dest, open: true } }))}
+                                onBlur={() => setTimeout(() => setConnInputs(prev => ({ ...prev, [dir]: { ...prev[dir], open: false } })), 120)}
+                              />
+                              {connSuggs.length > 0 && (
+                                <div style={styles.connDropdown}>
+                                  {connSuggs.map(name => (
+                                    <button
+                                      key={name}
+                                      style={styles.connDropdownItem}
+                                      onMouseDown={e => {
+                                        e.preventDefault()
+                                        setConnection(dir, name)
+                                        setConnInputs(prev => ({ ...prev, [dir]: { value: name, open: false } }))
+                                      }}
+                                    >{name}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <button style={{ ...styles.removeBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => removeConnection(dir)}><X size={12} /></button>
+                          </div>
+                        </div>
+                      )
+                    })}
                     <div style={styles.dirButtons}>
                       {DIRECTIONS.map(dir => (
                         <button
@@ -739,6 +778,7 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
                         ))}
                       </div>
                     )}
+
                   </div>
 
                   {/* Wild Pokemon */}
@@ -1109,6 +1149,31 @@ const styles = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+  },
+  connDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 4,
+    zIndex: 100,
+    maxHeight: 160,
+    overflowY: 'auto',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+  },
+  connDropdownItem: {
+    display: 'block',
+    width: '100%',
+    padding: '6px 10px',
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--text-primary)',
+    fontSize: 12,
+    textAlign: 'left',
+    cursor: 'pointer',
+    borderBottom: '1px solid var(--border-color)',
   },
   pokemonList: {
     display: 'flex',
