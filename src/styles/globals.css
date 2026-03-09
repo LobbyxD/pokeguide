@@ -1,0 +1,299 @@
+/* PokeGuide – VSCode / Windows 11 dark theme */
+
+:root {
+  /* Core backgrounds */
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d30;
+  --bg-card: #2a2a2a;
+  --bg-hover: #2f2f2f;
+  --bg-input: #3c3c3c;
+
+  /* Text */
+  --text-primary: #cccccc;
+  --text-secondary: #9d9d9d;
+  --text-muted: #6a6a6a;
+
+  /* Borders */
+  --border-color: #3e3e3e;
+  --border-subtle: rgba(255,255,255,0.06);
+
+  /* Accent / game color */
+  --accent: #0078d4;
+  --game-color: #e53e3e;
+
+  /* Map / overlay */
+  --quest-marker-color: #f6ad55;
+  --highlight-fill: rgba(0, 120, 212, 0.25);
+  --highlight-stroke: #0078d4;
+
+  /* Layout */
+  --sidebar-width: 240px;
+  --titlebar-height: 40px;
+
+  /* Effects */
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.4);
+  --shadow: 0 4px 20px rgba(0,0,0,0.5);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.6);
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --transition: 0.15s ease;
+}
+
+/* ── Themes ───────────────────────────────────── */
+[data-theme="midnight"] {
+  --bg-primary: #0d0d1a;
+  --bg-secondary: #111122;
+  --bg-tertiary: #1a1a30;
+  --bg-card: #13132a;
+  --bg-hover: #1e1e38;
+  --bg-input: #1a1a30;
+  --text-primary: #c8d8f0;
+  --text-secondary: #7080a0;
+  --text-muted: #4a5570;
+  --border-color: rgba(100,130,220,0.15);
+}
+
+[data-theme="forest"] {
+  --bg-primary: #1a2420;
+  --bg-secondary: #1e2c28;
+  --bg-tertiary: #243630;
+  --bg-card: #1e2c28;
+  --bg-hover: #28382e;
+  --bg-input: #243630;
+  --text-primary: #c8e0d0;
+  --text-secondary: #78a080;
+  --text-muted: #4a7058;
+  --border-color: rgba(80,180,100,0.12);
+}
+
+[data-theme="crimson"] {
+  --bg-primary: #1e1616;
+  --bg-secondary: #261c1c;
+  --bg-tertiary: #2e2020;
+  --bg-card: #261c1c;
+  --bg-hover: #322222;
+  --bg-input: #2e2020;
+  --text-primary: #e0c8c8;
+  --text-secondary: #a07878;
+  --text-muted: #6a4a4a;
+  --border-color: rgba(200,80,80,0.12);
+}
+
+/* ── Reset ────────────────────────────────────── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Scrollbars (VSCode style) ───────────────── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.12);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.22);
+}
+
+/* ── Base elements ───────────────────────────── */
+button {
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  border: none;
+  outline: none;
+  transition: background var(--transition), color var(--transition), border-color var(--transition), opacity var(--transition);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color var(--transition);
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--game-color);
+  box-shadow: 0 0 0 1px var(--game-color)44;
+}
+
+select option {
+  background: var(--bg-tertiary);
+}
+
+a {
+  color: var(--game-color);
+  text-decoration: none;
+}
+
+/* ── Layout ──────────────────────────────────── */
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  margin-top: var(--titlebar-height);
+}
+
+.app-content {
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg-primary);
+  position: relative;
+}
+
+/* ── Cards ───────────────────────────────────── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+/* ── Badges / Pills ──────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.type-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #fff;
+}
+
+/* ── Overlays / Modals ───────────────────────── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+/* ── Sidebar hover effects ───────────────────── */
+.app-body > div:first-child button:hover:not([disabled]) {
+  background: var(--bg-hover) !important;
+  color: var(--text-primary) !important;
+}
+
+/* ── Map toolbar buttons hover ───────────────── */
+button:hover:not([disabled]):not(.titlebar-ctrl) {
+  filter: brightness(1.1);
+}
+
+/* ── Keyboard shortcut badges ────────────────── */
+kbd {
+  font-family: 'Consolas', monospace;
+  font-size: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--text-muted);
+}
+
+/* ── Pulse animation ─────────────────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Utility ─────────────────────────────────── */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.gap-1 { gap: 4px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.text-sm { font-size: 12px; }
+.text-xs { font-size: 11px; }
+.text-muted { color: var(--text-secondary); }
+.font-bold { font-weight: 700; }
+.font-semibold { font-weight: 600; }
+.overflow-hidden { overflow: hidden; }
+.overflow-auto { overflow: auto; }
+.w-full { width: 100%; }
+.h-full { height: 100%; }
+.relative { position: relative; }
+.absolute { position: absolute; }
