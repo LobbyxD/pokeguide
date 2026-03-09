@@ -47,7 +47,7 @@ export default function TitleBar() {
           onError={e => { e.target.style.display = 'none' }}
         />
         <span style={styles.title}>PokéGuide</span>
-        <span style={styles.version}>v0.0.1</span>
+        <span style={styles.version}>v{__APP_VERSION__}</span>
       </div>
 
       <div style={styles.controls}>
