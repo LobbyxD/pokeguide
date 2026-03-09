@@ -93,10 +93,11 @@ export default function MapView({ game, onNavigateToPokemon }) {
 
   const getAreaVisuals = (area) => {
     const isSelected = selectedArea?.id === area.id
+    const isHovered = hoveredArea?.id === area.id
     const isCurrentLoc = area.id === currentStepLoc
     const color = AREA_COLORS[area.type] || '#a0aec0'
 
-    if (isSelected) return { opacity: 1, fill: 'var(--highlight-fill)', stroke: 'var(--highlight-stroke)', strokeWidth: 3 }
+    if (isSelected) return { opacity: 1, fill: color + '55', stroke: '#ffffff', strokeWidth: 2.5 }
     if (isCurrentLoc) return { opacity: 1, fill: 'rgba(246,173,85,0.35)', stroke: 'var(--quest-marker-color)', strokeWidth: 3 }
 
     if (searchQuery) {
@@ -104,6 +105,7 @@ export default function MapView({ game, onNavigateToPokemon }) {
       return { opacity: isMatch ? 1 : 0.12, fill: isMatch ? color + '77' : color + '22', stroke: isMatch ? color : color + '44', strokeWidth: isMatch ? 2 : 1 }
     }
     if (selectedArea) return { opacity: 0.3, fill: color + '22', stroke: color + '55', strokeWidth: 1 }
+    if (isHovered) return { opacity: 1, fill: color + '44', stroke: color + 'cc', strokeWidth: 2 }
     return { opacity: 0.45, fill: color + '33', stroke: color + '88', strokeWidth: 1.5 }
   }
 
@@ -111,7 +113,7 @@ export default function MapView({ game, onNavigateToPokemon }) {
 
   const handleWheel = useCallback((e) => {
     e.preventDefault()
-    const rect = containerRef.current?.getBoundingClientRect()
+    const rect = mapCanvasRef.current?.getBoundingClientRect()
     if (!rect) return
     const mouseX = e.clientX - rect.left
     const mouseY = e.clientY - rect.top
@@ -126,7 +128,7 @@ export default function MapView({ game, onNavigateToPokemon }) {
   }, [scale])
 
   useEffect(() => {
-    const el = containerRef.current
+    const el = mapCanvasRef.current
     if (!el) return
     el.addEventListener('wheel', handleWheel, { passive: false })
     return () => el.removeEventListener('wheel', handleWheel)
@@ -212,24 +214,42 @@ export default function MapView({ game, onNavigateToPokemon }) {
     return t
   }
 
-  const polygonToStr = (polygon) => polygon.map(p => p.join(',')).join(' ')
+  const getShapes = (area) => {
+    if (area.shapes && area.shapes.length > 0) return area.shapes
+    if (area.polygon && area.polygon.length > 0) return [area.polygon]
+    return []
+  }
 
-  const getAreaCenter = (polygon) => {
-    if (!polygon || polygon.length === 0) return { x: 0, y: 0 }
-    const cx = polygon.reduce((s, p) => s + p[0], 0) / polygon.length
-    const cy = polygon.reduce((s, p) => s + p[1], 0) / polygon.length
-    return { x: cx, y: cy }
+  const shapesToPath = (shapes) =>
+    shapes.map(pts => 'M ' + pts.map(p => p.join(',')).join(' L ') + ' Z').join(' ')
+
+  // Returns centroid of the largest shape (always inside a rectangle)
+  const getAreaCenter = (area) => {
+    const shapes = getShapes(area)
+    if (shapes.length === 0) return { x: 0, y: 0 }
+    let best = shapes[0], bestArea = 0
+    for (const pts of shapes) {
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
+      const a = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))
+      if (a > bestArea) { bestArea = a; best = pts }
+    }
+    return {
+      x: best.reduce((s, p) => s + p[0], 0) / best.length,
+      y: best.reduce((s, p) => s + p[1], 0) / best.length,
+    }
   }
 
   // Focus map on an area by name or id
   const focusOnArea = useCallback((areaNameOrId) => {
     const target = areas.find(a => a.name === areaNameOrId || a.id === areaNameOrId)
-    if (!target || !target.polygon || target.polygon.length === 0) return
+    const targetShapes = target ? (target.shapes?.length > 0 ? target.shapes : target.polygon?.length > 0 ? [target.polygon] : []) : []
+    if (!target || targetShapes.length === 0) return
 
     setSelectedArea(target)
 
-    const xs = target.polygon.map(p => p[0])
-    const ys = target.polygon.map(p => p[1])
+    const allPts = targetShapes.flat()
+    const xs = allPts.map(p => p[0])
+    const ys = allPts.map(p => p[1])
     const minX = Math.min(...xs), maxX = Math.max(...xs)
     const minY = Math.min(...ys), maxY = Math.max(...ys)
     const centerX = (minX + maxX) / 2
@@ -380,47 +400,66 @@ export default function MapView({ game, onNavigateToPokemon }) {
               height={mapHeight}
               style={{ position: 'absolute', top: 0, left: 0 }}
             >
+              <defs>
+                {areas.map(area => {
+                  const { stroke, strokeWidth } = getAreaVisuals(area)
+                  return (
+                    <filter key={area.id} id={`mv-border-${area.id}`} x="-5%" y="-5%" width="110%" height="110%" colorInterpolationFilters="sRGB">
+                      <feMorphology in="SourceAlpha" operator="dilate" radius={strokeWidth} result="expanded" />
+                      <feFlood floodColor={stroke} result="color" />
+                      <feComposite in="color" in2="expanded" operator="in" result="outline" />
+                      <feMerge>
+                        <feMergeNode in="outline" />
+                        <feMergeNode in="SourceGraphic" />
+                      </feMerge>
+                    </filter>
+                  )
+                })}
+              </defs>
               {areas.map(area => {
-                const { opacity, fill, stroke, strokeWidth } = getAreaVisuals(area)
+                const { opacity, fill } = getAreaVisuals(area)
                 const isCurrentLoc = area.id === currentStepLoc
+                const shapes = getShapes(area)
+                if (shapes.length === 0) return null
 
                 return (
                   <g
                     key={area.id}
+                    filter={`url(#mv-border-${area.id})`}
                     style={{ opacity, transition: 'opacity 0.15s' }}
                     onClick={(e) => handleAreaClick(e, area)}
                     onMouseEnter={(e) => handleAreaHover(e, area)}
                     onMouseLeave={handleAreaLeave}
                   >
-                    <polygon
-                      points={polygonToStr(area.polygon)}
+                    <path
+                      d={shapesToPath(shapes)}
                       fill={fill}
-                      stroke={stroke}
-                      strokeWidth={strokeWidth}
-                      style={{ cursor: 'pointer', transition: 'fill 0.15s, stroke 0.15s' }}
+                      shapeRendering="crispEdges"
+                      style={{ cursor: 'pointer', transition: 'fill 0.15s' }}
                     />
-                    {showLabels && area.polygon.length > 0 && (() => {
-                      const center = getAreaCenter(area.polygon)
+                    {showLabels && (() => {
+                      const center = getAreaCenter(area)
                       return (
                         <text
                           x={center.x} y={center.y}
                           textAnchor="middle" dominantBaseline="central"
-                          fill="#fff" fontSize={13} fontWeight="bold"
-                          style={{ pointerEvents: 'none', paintOrder: 'stroke', stroke: '#000', strokeWidth: 3 }}
+                          fill="#fff" fontSize={14 / scale} fontWeight="bold"
+                          style={{ pointerEvents: 'none', paintOrder: 'stroke', stroke: '#000', strokeWidth: 4 / scale }}
                         >
                           {area.name}
                         </text>
                       )
                     })()}
                     {isCurrentLoc && (() => {
-                      const center = getAreaCenter(area.polygon)
+                      const center = getAreaCenter(area)
+                      const r = 10 / scale
                       return (
                         <g>
-                          <circle cx={center.x} cy={center.y - 20} r={10} fill="var(--quest-marker-color)" />
-                          <text x={center.x} y={center.y - 20} textAnchor="middle" dominantBaseline="central"
-                            fill="#000" fontSize={12} fontWeight="bold">!</text>
-                          <line x1={center.x} y1={center.y - 10} x2={center.x} y2={center.y}
-                            stroke="var(--quest-marker-color)" strokeWidth={2} />
+                          <circle cx={center.x} cy={center.y - 20 / scale} r={r} fill="var(--quest-marker-color)" />
+                          <text x={center.x} y={center.y - 20 / scale} textAnchor="middle" dominantBaseline="central"
+                            fill="#000" fontSize={12 / scale} fontWeight="bold">!</text>
+                          <line x1={center.x} y1={center.y - (20 / scale - r)} x2={center.x} y2={center.y}
+                            stroke="var(--quest-marker-color)" strokeWidth={2 / scale} />
                         </g>
                       )
                     })()}

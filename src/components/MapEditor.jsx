@@ -6,9 +6,21 @@ const AREA_TYPES = ['Town', 'City', 'Route', 'Cave', 'Sea', 'Island', 'Forest', 
 const DIRECTIONS = ['N', 'S', 'E', 'W', 'NE', 'SE', 'SW', 'NW']
 const MAX_UNDO = 20
 
+// Returns all sub-shapes for an area (supports both legacy `polygon` and new `shapes` format)
+function getShapes(area) {
+  if (area.shapes && area.shapes.length > 0) return area.shapes
+  if (area.polygon && area.polygon.length > 0) return [area.polygon]
+  return []
+}
+
 export default function MapEditor({ mapData, gameId, onClose, onSave }) {
   const [areas, setAreas] = useState(() =>
-    (mapData?.areas || []).map(a => ({ ...a, polygon: a.polygon ? a.polygon.map(p => [...p]) : [] }))
+    (mapData?.areas || []).map(a => {
+      const poly = a.polygon ? a.polygon.map(p => [...p]) : []
+      const existingShapes = a.shapes ? a.shapes.map(s => s.map(p => [...p])) : []
+      const shapes = existingShapes.length > 0 ? existingShapes : (poly.length > 0 ? [poly] : [])
+      return { ...a, polygon: poly, shapes }
+    })
   )
   const [selectedAreaId, setSelectedAreaId] = useState(null)
   const [tool, setTool] = useState('select') // select | rect | move
@@ -21,8 +33,14 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
   const [allPokemon, setAllPokemon] = useState([])
   const [pokedexPokemon, setPokedexPokemon] = useState([])
   const [pokedexData, setPokedexData] = useState([]) // full data with locations
-  const [imageOverride, setImageOverride] = useState(null)
-  const [imageDimensions, setImageDimensions] = useState(null)
+  const [imageOverride, setImageOverride] = useState(() =>
+    mapData?.image?.startsWith?.('data:') ? mapData.image : null
+  )
+  const [imageDimensions, setImageDimensions] = useState(() =>
+    mapData?.image?.startsWith?.('data:') && mapData.width && mapData.height
+      ? { width: mapData.width, height: mapData.height }
+      : null
+  )
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [scale, setScale] = useState(0.4)
   const [isPanning, setIsPanning] = useState(false)
@@ -60,10 +78,38 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
     setScale(fitScale)
   }, [mapWidth, mapHeight])
 
-  // Escape = close
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e) => {
-      if (e.key === 'Escape') onClose()
+      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)
+      const { selectedAreaId, undo, deleteArea, resetView } = kbRef.current
+
+      if (e.key === 'Escape') {
+        if (selectedAreaId) setSelectedAreaId(null)
+        else onClose()
+        return
+      }
+      if (isInput) return
+
+      if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault(); undo(); return
+      }
+
+      switch (e.key) {
+        case 'v': case 'V': setTool('select'); break
+        case 'r': case 'R': setTool('rect'); break
+        case 'h': case 'H': setTool('move'); break
+        case '=': case '+': setScale(s => Math.min(s * 1.2, 5)); break
+        case '-': setScale(s => Math.max(s / 1.2, 0.05)); break
+        case '0': resetView(); break
+        case 'Delete':
+        case 'Backspace':
+          if (selectedAreaId) { e.preventDefault(); deleteArea(selectedAreaId) }
+          break
+        case 'Enter':
+          if (selectedAreaId) { e.preventDefault(); setSelectedAreaId(null) }
+          break
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -152,12 +198,14 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
     })
   }
 
-  const undo = () => {
-    if (undoStack.length === 0) return
-    const prev = undoStack[undoStack.length - 1]
-    setUndoStack(s => s.slice(0, -1))
-    setAreas(prev)
-  }
+  const undo = useCallback(() => {
+    setUndoStack(stack => {
+      if (stack.length === 0) return stack
+      const prev = stack[stack.length - 1]
+      setAreas(prev)
+      return stack.slice(0, -1)
+    })
+  }, [])
 
   const getSVGPoint = (e) => {
     const rect = svgRef.current.getBoundingClientRect()
@@ -200,19 +248,33 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
       const [x1, y1] = drawStart
       const [x2, y2] = drawCurrent
       if (Math.abs(x2 - x1) > 10 && Math.abs(y2 - y1) > 10) {
-        const newArea = {
-          id: `area-${Date.now()}`,
-          name: 'New Area',
-          type: 'Route',
-          polygon: [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
-          pokemon: [],
-          note: '',
-          connections: {},
-          showLabel: true,
+        const newShape = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+        const shiftMerge = e.shiftKey && selectedAreaId && selectedArea
+        if (shiftMerge) {
+          // Merge new shape into the selected area
+          const merged = [...getShapes(selectedArea), newShape]
+          pushUndo(areas)
+          setAreas(prev => prev.map(a =>
+            a.id === selectedAreaId
+              ? { ...a, shapes: merged, polygon: merged[0] }
+              : a
+          ))
+        } else {
+          const newArea = {
+            id: `area-${Date.now()}`,
+            name: 'New Area',
+            type: 'Route',
+            polygon: newShape,
+            shapes: [newShape],
+            pokemon: [],
+            note: '',
+            connections: {},
+            showLabel: true,
+          }
+          pushUndo(areas)
+          setAreas(prev => [...prev, newArea])
+          setSelectedAreaId(newArea.id)
         }
-        pushUndo(areas)
-        setAreas(prev => [...prev, newArea])
-        setSelectedAreaId(newArea.id)
       }
       setIsDrawing(false)
       setDrawStart(null)
@@ -236,11 +298,17 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
     setAreas(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a))
   }
 
-  const deleteArea = (id) => {
-    pushUndo(areas)
-    setAreas(prev => prev.filter(a => a.id !== id))
+  const deleteArea = useCallback((id) => {
+    setAreas(prev => {
+      setUndoStack(stack => [...stack, prev].slice(-MAX_UNDO))
+      return prev.filter(a => a.id !== id)
+    })
     setSelectedAreaId(null)
-  }
+  }, [])
+
+  // Always-fresh ref for keyboard handler — updated synchronously each render (must be after undo/deleteArea/resetView)
+  const kbRef = useRef({})
+  kbRef.current = { selectedAreaId, undo, deleteArea, resetView }
 
   const addPokemon = (name) => {
     if (!selectedArea) return
@@ -291,7 +359,7 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
 
   // Auto-detect touching/nearby areas and suggest connections
   const getConnectionSuggestions = useCallback(() => {
-    if (!selectedArea || !selectedArea.polygon || selectedArea.polygon.length === 0) return []
+    if (!selectedArea || getShapes(selectedArea).length === 0) return []
 
     const getCenter = (polygon) => ({
       x: polygon.reduce((s, p) => s + p[0], 0) / polygon.length,
@@ -318,16 +386,17 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
       return 'N'
     }
 
-    const selBounds = getBounds(selectedArea.polygon)
-    const selCenter = getCenter(selectedArea.polygon)
+    const selPts = getShapes(selectedArea).flat()
+    const selBounds = getBounds(selPts)
+    const selCenter = getCenter(selPts)
     const existingDirs = new Set(Object.keys(selectedArea.connections || {}))
     const existingDests = new Set(Object.values(selectedArea.connections || {}).filter(Boolean))
 
     return areas
-      .filter(a => a.id !== selectedAreaId && a.polygon && a.polygon.length > 0)
-      .filter(a => boundsNear(selBounds, getBounds(a.polygon)))
+      .filter(a => a.id !== selectedAreaId && getShapes(a).length > 0)
+      .filter(a => boundsNear(selBounds, getBounds(getShapes(a).flat())))
       .filter(a => !existingDests.has(a.name) && !existingDests.has(a.id))
-      .map(a => ({ area: a, dir: getDir(selCenter, getCenter(a.polygon)) }))
+      .map(a => ({ area: a, dir: getDir(selCenter, getCenter(getShapes(a).flat())) }))
       .filter(({ dir }) => !existingDirs.has(dir))
       .slice(0, 6)
   }, [selectedArea, selectedAreaId, areas])
@@ -431,6 +500,9 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
   }
 
   const polygonToStr = (polygon) => polygon.map(p => p.join(',')).join(' ')
+  // Converts multiple polygons into a single SVG compound path — one fill, no color stacking
+  const shapesToPath = (shapes) =>
+    shapes.map(pts => 'M ' + pts.map(p => p.join(',')).join(' L ') + ' Z').join(' ')
 
   const drawRect = drawStart && drawCurrent ? [
     drawStart,
@@ -457,9 +529,9 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
           <div style={styles.toolbar}>
             <div style={styles.toolGroup}>
               {[
-                { id: 'select', icon: <MousePointer size={15} />, title: 'Select' },
-                { id: 'rect', icon: <Square size={15} />, title: 'Draw Rectangle' },
-                { id: 'move', icon: <Hand size={15} />, title: 'Pan (or middle-mouse)' },
+                { id: 'select', icon: <MousePointer size={15} />, title: 'Select (V)' },
+                { id: 'rect', icon: <Square size={15} />, title: 'Draw Rectangle (R) — Hold Shift to add shape to selected area' },
+                { id: 'move', icon: <Hand size={15} />, title: 'Pan (H) — or middle-mouse drag' },
               ].map(t => (
                 <button
                   key={t.id}
@@ -475,9 +547,9 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
             <div style={styles.toolDivider} />
 
             <div style={styles.toolGroup}>
-              <button style={styles.toolBtn2} onClick={() => setScale(s => Math.min(s * 1.2, 5))} title="Zoom In"><Plus size={14} /></button>
-              <button style={styles.toolBtn2} onClick={() => setScale(s => Math.max(s / 1.2, 0.05))} title="Zoom Out"><Minus size={14} /></button>
-              <button style={styles.toolBtn2} onClick={resetView} title="Reset View (Center)"><Home size={14} /></button>
+              <button style={styles.toolBtn2} onClick={() => setScale(s => Math.min(s * 1.2, 5))} title="Zoom In (+)"><Plus size={14} /></button>
+              <button style={styles.toolBtn2} onClick={() => setScale(s => Math.max(s / 1.2, 0.05))} title="Zoom Out (-)"><Minus size={14} /></button>
+              <button style={styles.toolBtn2} onClick={resetView} title="Reset View (0)"><Home size={14} /></button>
             </div>
 
             <div style={styles.toolDivider} />
@@ -503,32 +575,65 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
                 onMouseDown={handleSVGMouseDown}
                 onClick={handleSVGClick}
               >
+                <defs>
+                  {areas.map(area => {
+                    const isSelected = selectedAreaId === area.id
+                    const strokeColor = isSelected ? '#ffffff' : getAreaColor(area.type)
+                    const radius = (isSelected ? 2.5 : 1) / scale
+                    return (
+                      <filter key={area.id} id={`border-${area.id}`} x="-5%" y="-5%" width="110%" height="110%" colorInterpolationFilters="sRGB">
+                        <feMorphology in="SourceAlpha" operator="dilate" radius={radius} result="expanded" />
+                        <feFlood floodColor={strokeColor} result="color" />
+                        <feComposite in="color" in2="expanded" operator="in" result="outline" />
+                        <feMerge>
+                          <feMergeNode in="outline" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
+                    )
+                  })}
+                </defs>
                 <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
                   {mapImage && (
                     <image href={mapImage} x={0} y={0} width={mapWidth} height={mapHeight} />
                   )}
-                  {areas.map(area => (
-                    <g key={area.id} onClick={(e) => handleAreaClick(e, area.id)}>
-                      <polygon
-                        points={polygonToStr(area.polygon)}
-                        fill={getAreaColor(area.type) + (selectedAreaId === area.id ? 'aa' : '44')}
-                        stroke={selectedAreaId === area.id ? '#fff' : getAreaColor(area.type)}
-                        strokeWidth={selectedAreaId === area.id ? 3 / scale : 1.5 / scale}
-                        style={{ cursor: 'pointer' }}
-                      />
-                      {area.showLabel !== false && area.polygon.length > 0 && (() => {
-                        const cx = area.polygon.reduce((s, p) => s + p[0], 0) / area.polygon.length
-                        const cy = area.polygon.reduce((s, p) => s + p[1], 0) / area.polygon.length
-                        return (
-                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
-                            fill="#fff" fontSize={14 / scale} fontWeight="bold"
-                            style={{ pointerEvents: 'none', paintOrder: 'stroke', stroke: '#000', strokeWidth: 4 / scale }}>
-                            {area.name}
-                          </text>
-                        )
-                      })()}
-                    </g>
-                  ))}
+                  {areas.map(area => {
+                    const shapes = getShapes(area)
+                    const isSelected = selectedAreaId === area.id
+                    return (
+                      <g key={area.id} filter={`url(#border-${area.id})`} onClick={(e) => handleAreaClick(e, area.id)}>
+                        <path
+                          d={shapesToPath(shapes)}
+                          fill={getAreaColor(area.type) + (isSelected ? 'aa' : '44')}
+                          shapeRendering="crispEdges"
+                          style={{ cursor: 'pointer' }}
+                        />
+                        {area.showLabel !== false && shapes.length > 0 && (() => {
+                          // Use centroid of the largest shape so the label is always inside a polygon
+                          let best = null, bestArea = 0
+                          for (const pts of shapes) {
+                            const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
+                            const a = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))
+                            if (a > bestArea) {
+                              bestArea = a
+                              best = {
+                                cx: pts.reduce((s, p) => s + p[0], 0) / pts.length,
+                                cy: pts.reduce((s, p) => s + p[1], 0) / pts.length,
+                              }
+                            }
+                          }
+                          const { cx, cy } = best
+                          return (
+                            <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+                              fill="#fff" fontSize={14 / scale} fontWeight="bold"
+                              style={{ pointerEvents: 'none', paintOrder: 'stroke', stroke: '#000', strokeWidth: 4 / scale }}>
+                              {area.name}
+                            </text>
+                          )
+                        })()}
+                      </g>
+                    )
+                  })}
                   {drawRect && (
                     <polygon
                       points={polygonToStr(drawRect)}
@@ -736,13 +841,23 @@ export default function MapEditor({ mapData, gameId, onClose, onSave }) {
                   >
                     Delete Area
                   </button>
+                  <div style={styles.kbHint}>Del · delete &nbsp;|&nbsp; Enter · deselect</div>
                 </div>
               ) : (
                 <div style={styles.noSelection}>
                   <div style={{ marginBottom: 8, color: 'var(--text-muted)' }}><MousePointer size={32} /></div>
                   <div style={{ fontWeight: 600, marginBottom: 4 }}>No area selected</div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 16 }}>
                     Click an area to edit it, or use the rectangle tool to draw a new one.
+                  </div>
+                  <div style={styles.kbCheatsheet}>
+                    <div style={styles.kbRow}><kbd style={styles.kbd}>V</kbd> Select</div>
+                    <div style={styles.kbRow}><kbd style={styles.kbd}>R</kbd> Draw rect</div>
+                    <div style={styles.kbRow}><kbd style={styles.kbd}>H</kbd> Pan</div>
+                    <div style={styles.kbRow}><kbd style={styles.kbd}>+</kbd><kbd style={styles.kbd}>-</kbd> Zoom</div>
+                    <div style={styles.kbRow}><kbd style={styles.kbd}>0</kbd> Reset view</div>
+                    <div style={styles.kbRow}><kbd style={styles.kbd}>Ctrl Z</kbd> Undo</div>
+                    <div style={styles.kbRow}><kbd style={styles.kbd}>Shift</kbd>+draw → merge shapes</div>
                   </div>
                 </div>
               )}
@@ -1099,5 +1214,39 @@ const styles = {
     fontSize: 11,
     color: 'var(--text-primary)',
     transition: 'border-color 0.12s, background 0.12s',
+  },
+  kbHint: {
+    marginTop: 10,
+    fontSize: 10,
+    color: 'var(--text-muted)',
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  kbCheatsheet: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 5,
+    width: '100%',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 8,
+    padding: '10px 14px',
+  },
+  kbRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 11,
+    color: 'var(--text-secondary)',
+  },
+  kbd: {
+    background: 'var(--bg-tertiary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 3,
+    padding: '1px 5px',
+    fontSize: 10,
+    fontFamily: 'monospace',
+    color: 'var(--text-primary)',
+    whiteSpace: 'nowrap',
   },
 }

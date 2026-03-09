@@ -1,6 +1,6 @@
 {
   "name": "pokeguide",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pokemon companion app",
   "main": "electron/main.js",
   "author": "R2D2 Games",
@@ -8,6 +8,7 @@
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
     "dist": "vite build && electron-builder",
+    "release": "vite build && electron-builder --publish always",
     "electron": "electron ."
   },
   "dependencies": {
