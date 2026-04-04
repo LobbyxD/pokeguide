@@ -54,8 +54,21 @@
       ]
     },
     "nsis": {
-      "artifactName": "PokeGuide Installer.${ext}",
-      "differentialPackage": true
+      "oneClick": true,
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeaderIcon": "resources/icon.ico",
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": false,
+      "shortcutName": "PokeGuide",
+      "menuCategory": "Games",
+      "runAfterFinish": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "PokeGuide-Setup-${version}.${ext}",
+      "differentialPackage": true,
+      "include": "build/installer.nsh"
     },
     "publish": [
       {

@@ -216,6 +216,17 @@ export default function MapView({ game, onNavigateToPokemon }) {
     return t
   }
 
+  // Counter-transform for SVG text so labels stay upright regardless of rotation/mirror.
+  // CSS applies transforms right-to-left: scaleX(-1) first, then rotate(R).
+  // To undo both in SVG (also right-to-left): counter-mirror first in string, counter-rotate second.
+  const getLabelTransform = (cx, cy) => {
+    const counterRotate = rotation ? `rotate(${-rotation}, ${cx}, ${cy})` : ''
+    const counterMirror = mirrored
+      ? `translate(${cx}, 0) scale(-1, 1) translate(${-cx}, 0)`
+      : ''
+    return [counterMirror, counterRotate].filter(Boolean).join(' ') || undefined
+  }
+
   const getShapes = (area) => {
     if (area.shapes && area.shapes.length > 0) return area.shapes
     if (area.polygon && area.polygon.length > 0) return [area.polygon]
@@ -446,6 +457,7 @@ export default function MapView({ game, onNavigateToPokemon }) {
                           x={center.x} y={center.y}
                           textAnchor="middle" dominantBaseline="central"
                           fill="#fff" fontSize={14 / scale} fontWeight="bold"
+                          transform={getLabelTransform(center.x, center.y)}
                           style={{ pointerEvents: 'none', paintOrder: 'stroke', stroke: '#000', strokeWidth: 4 / scale }}
                         >
                           {area.name}
@@ -459,7 +471,8 @@ export default function MapView({ game, onNavigateToPokemon }) {
                         <g>
                           <circle cx={center.x} cy={center.y - 20 / scale} r={r} fill="var(--quest-marker-color)" />
                           <text x={center.x} y={center.y - 20 / scale} textAnchor="middle" dominantBaseline="central"
-                            fill="#000" fontSize={12 / scale} fontWeight="bold">!</text>
+                            fill="#000" fontSize={12 / scale} fontWeight="bold"
+                            transform={getLabelTransform(center.x, center.y - 20 / scale)}>!</text>
                           <line x1={center.x} y1={center.y - (20 / scale - r)} x2={center.x} y2={center.y}
                             stroke="var(--quest-marker-color)" strokeWidth={2 / scale} />
                         </g>
@@ -490,6 +503,18 @@ export default function MapView({ game, onNavigateToPokemon }) {
                 <div style={styles.stepText} title={typeof currentStep === 'string' ? currentStep : (currentStep.text || currentStep.title || '')}>
                   {typeof currentStep === 'string' ? currentStep : (currentStep.text || currentStep.title || `Step ${currentStepIdx + 1}`)}
                 </div>
+              )}
+              {currentStepLoc && (
+                <button
+                  style={styles.stepLocBtn}
+                  onClick={() => focusOnArea(currentStepLoc)}
+                  title="Center map on this location"
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none" style={{ flexShrink: 0 }}>
+                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                  </svg>
+                  {currentStepLoc}
+                </button>
               )}
               <div style={styles.stepProgressBar}>
                 <div style={{ ...styles.stepProgressFill, width: `${Math.round(((currentStepIdx + 1) / steps.length) * 100)}%` }} />
@@ -731,12 +756,28 @@ const styles = {
   },
   stepCard: {
     flexShrink: 0,
-    height: 160,
     display: 'flex',
     flexDirection: 'column',
     padding: 12,
     borderBottom: '1px solid var(--border-color)',
     background: 'var(--bg-secondary)',
+  },
+  stepLocBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+    background: 'var(--game-color)18',
+    color: 'var(--game-color)',
+    border: '1px solid var(--game-color)44',
+    borderRadius: 10,
+    padding: '2px 8px 2px 6px',
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: 'pointer',
+    flexShrink: 0,
+    transition: 'background 0.15s',
   },
   stepHeader: {
     display: 'flex',

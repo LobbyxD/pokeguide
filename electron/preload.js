@@ -35,6 +35,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdates: () => ipcRenderer.send('check-for-updates'),
   getPendingUpdate: () => ipcRenderer.invoke('get-pending-update'),
 
+  onAppUpdated: (cb) => {
+    ipcRenderer.on('app-updated', (event, version) => cb(version))
+  },
+
   generateAiText: (prompt) => ipcRenderer.invoke('generate-ai-text', prompt),
 
   openExternal: (url) => ipcRenderer.invoke('open-external', url),

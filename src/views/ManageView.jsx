@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, X, ChevronUp, ChevronDown, Check, Loader, Sparkles, Settings, Map, Download, Upload, Package, FolderOpen } from '../components/Icons.jsx'
+import { Plus, X, ChevronUp, ChevronDown, Check, Loader, Sparkles, Settings, Map, Download, Upload, Package, FolderOpen, Globe } from '../components/Icons.jsx'
+
+const OFFICIAL_PRESETS_URL = 'https://raw.githubusercontent.com/LobbyxD/pokeguide/main/presets/index.json'
 import { mapData as defaultMapData } from '../data/index.js'
 import { useDialog } from '../components/Dialog.jsx'
 
@@ -85,10 +87,13 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
   const [aiGenerating, setAiGenerating] = useState(false)
   const [aiPromptText, setAiPromptText] = useState('')
   const [aiResult, setAiResult] = useState(null)
-  const [addingNew, setAddingNew] = useState(false)
+  const [addingNew, setAddingNew] = useState(() => games.length === 0)
   const [presets, setPresets] = useState([])
   const [dataDir, setDataDir] = useState(null)
   const [presetBusy, setPresetBusy] = useState(false)
+  const [officialPresets, setOfficialPresets] = useState(null) // null = not fetched yet
+  const [officialLoading, setOfficialLoading] = useState(false)
+  const [officialError, setOfficialError] = useState(null)
 
   // Load presets list and dataDir once
   useEffect(() => {
@@ -99,6 +104,37 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
 
   const refreshPresets = () => {
     if (window.electronAPI) window.electronAPI.listPresets().then(setPresets).catch(() => {})
+  }
+
+  const fetchOfficialPresets = async () => {
+    if (officialLoading) return
+    setOfficialLoading(true)
+    setOfficialError(null)
+    try {
+      const res = await fetch(OFFICIAL_PRESETS_URL)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      setOfficialPresets(data)
+    } catch {
+      setOfficialError('Could not load official presets. Check your internet connection.')
+      setOfficialPresets([])
+    }
+    setOfficialLoading(false)
+  }
+
+  const loadOfficialPreset = async (item) => {
+    setOfficialLoading(true)
+    try {
+      const url = `https://raw.githubusercontent.com/LobbyxD/pokeguide/main/presets/${item.filename}.pgpreset`
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`Failed to download preset (HTTP ${res.status})`)
+      const preset = await res.json()
+      setOfficialLoading(false)
+      await createFromPreset(preset)
+    } catch (e) {
+      setOfficialLoading(false)
+      await alert(e.message, { title: 'Failed to Load Preset', type: 'error' })
+    }
   }
 
   // Load map areas for the active game (for location autocomplete)
@@ -512,6 +548,52 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
                       ))}
                     </div>
                   </>
+                )}
+
+                {/* Official Presets */}
+                <div style={styles.presetSectionLabel}>Official Presets</div>
+                {officialPresets === null ? (
+                  <button
+                    style={{ ...styles.blankPresetBtn, flexDirection: 'row', gap: 10, justifyContent: 'flex-start', padding: '14px 16px' }}
+                    disabled={officialLoading || presetBusy}
+                    onClick={fetchOfficialPresets}
+                  >
+                    {officialLoading ? <Loader size={16} /> : <Globe size={16} />}
+                    <div style={{ textAlign: 'left' }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>Browse Official Presets</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Community presets from the PokeGuide repo</div>
+                    </div>
+                  </button>
+                ) : officialError ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8 }}>
+                    <span style={{ fontSize: 12, color: '#e05c5c', flex: 1 }}>{officialError}</span>
+                    <button style={{ ...styles.exportBtn, fontSize: 11 }} onClick={() => { setOfficialPresets(null); setOfficialError(null) }}>Retry</button>
+                  </div>
+                ) : officialPresets.length === 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '10px 14px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8 }}>
+                    No official presets available yet.
+                  </div>
+                ) : (
+                  <div style={styles.presetGrid}>
+                    {officialPresets.map(p => (
+                      <button
+                        key={p.filename}
+                        style={styles.presetCard}
+                        disabled={presetBusy || officialLoading}
+                        onClick={() => loadOfficialPreset(p)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Globe size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                          <div style={{ flex: 1, textAlign: 'left' }}>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
+                            {p.description && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{p.description}</div>}
+                            {p.author && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>by {p.author}</div>}
+                          </div>
+                          <span style={styles.presetTypeBadge}>{p.type}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 )}
 
                 {/* Import from file */}

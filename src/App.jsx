@@ -8,7 +8,7 @@ import MapView from './views/MapView.jsx'
 import PokedexView from './views/PokedexView.jsx'
 import TypeChartView from './views/TypeChartView.jsx'
 import ManageView from './views/ManageView.jsx'
-import { defaultGames } from './data/index.js'
+import { Globe } from './components/Icons.jsx'
 
 const VIEWS = ['walkthrough', 'map', 'pokedex', 'types', 'manage']
 
@@ -21,21 +21,22 @@ export default function App() {
   const [pokedexInitialSearch, setPokedexInitialSearch] = useState('')
   const [updateInfo, setUpdateInfo] = useState(null)      // { version } when update available
   const [updateProgress, setUpdateProgress] = useState(null) // 0-100 while downloading
+  const [updatedVersion, setUpdatedVersion] = useState(null) // set after silent auto-update installs
 
   const historyRef = useRef([])
   const historyIndexRef = useRef(-1)
   const navigatingRef = useRef(false)
 
-  // Load games from localStorage
+  // Load games from localStorage — empty array on fresh install
   useEffect(() => {
     try {
       const stored = localStorage.getItem('pg_games')
-      const loadedGames = stored ? JSON.parse(stored) : defaultGames
+      const loadedGames = stored ? JSON.parse(stored) : []
       setGames(loadedGames)
-      setSelectedGame(loadedGames[0])
+      setSelectedGame(loadedGames[0] || null)
     } catch {
-      setGames(defaultGames)
-      setSelectedGame(defaultGames[0])
+      setGames([])
+      setSelectedGame(null)
     }
   }, [])
 
@@ -52,6 +53,7 @@ export default function App() {
     if (!window.electronAPI) return
     window.electronAPI.onUpdateAvailable((info) => setUpdateInfo(info))
     window.electronAPI.onUpdateProgress((p) => setUpdateProgress(Math.round(p.percent)))
+    window.electronAPI.onAppUpdated?.((v) => setUpdatedVersion(v))
     // Catch updates that fired before React mounted (race condition on startup)
     window.electronAPI.getPendingUpdate().then((info) => {
       if (info) setUpdateInfo(info)
@@ -178,7 +180,29 @@ export default function App() {
   }
 
   const renderView = () => {
-    if (!selectedGame) return null
+    if (!selectedGame) return (
+      <div style={welcomeStyles.container}>
+        <div style={welcomeStyles.card}>
+          <img src="/app-icon.png" alt="PokeGuide" style={{ width: 64, height: 64, marginBottom: 16, imageRendering: 'pixelated' }} />
+          <div style={welcomeStyles.title}>Welcome to PokeGuide</div>
+          <div style={welcomeStyles.sub}>Get started by creating a game or loading an official preset.</div>
+          <div style={welcomeStyles.actions}>
+            <button
+              style={welcomeStyles.btnPrimary}
+              onClick={() => navigate('manage')}
+            >
+              + Create a Game
+            </button>
+            <button
+              style={welcomeStyles.btnSecondary}
+              onClick={() => navigate('manage')}
+            >
+              <Globe size={14} /> Browse Official Presets
+            </button>
+          </div>
+        </div>
+      </div>
+    )
     switch (activeView) {
       case 'walkthrough':
         return <WalkthroughView game={selectedGame} games={games} onSaveGames={handleSaveGames} />
@@ -225,6 +249,14 @@ export default function App() {
         />
       )}
 
+      {updatedVersion && (
+        <div style={updatedBannerStyle} onClick={() => setUpdatedVersion(null)} title="Click to dismiss">
+          <span style={{ color: '#4ec98a', fontWeight: 700, marginRight: 6 }}>✓</span>
+          Updated to v{updatedVersion} — enjoy the new features!
+          <span style={{ marginLeft: 'auto', opacity: 0.5, fontSize: 11 }}>✕</span>
+        </div>
+      )}
+
       {updateInfo && (
         <div style={updateStyles.overlay}>
           <div style={updateStyles.modal}>
@@ -265,6 +297,89 @@ export default function App() {
     </div>
     </DialogProvider>
   )
+}
+
+const updatedBannerStyle = {
+  position: 'fixed',
+  top: 40,
+  left: 0,
+  right: 0,
+  height: 36,
+  background: 'rgba(30,50,40,0.96)',
+  borderBottom: '1px solid rgba(78,201,138,0.25)',
+  display: 'flex',
+  alignItems: 'center',
+  padding: '0 16px',
+  fontSize: 12,
+  color: 'var(--text-secondary)',
+  zIndex: 9998,
+  cursor: 'pointer',
+  userSelect: 'none',
+}
+
+const welcomeStyles = {
+  container: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    background: 'var(--bg-primary)',
+  },
+  card: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    textAlign: 'center',
+    padding: '40px 48px',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 16,
+    maxWidth: 380,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+    marginBottom: 10,
+  },
+  sub: {
+    fontSize: 13,
+    color: 'var(--text-muted)',
+    lineHeight: 1.6,
+    marginBottom: 28,
+  },
+  actions: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    width: '100%',
+  },
+  btnPrimary: {
+    background: 'var(--game-color, #e53e3e)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '11px 0',
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: 'pointer',
+    width: '100%',
+  },
+  btnSecondary: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    background: 'var(--bg-tertiary)',
+    color: 'var(--text-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 8,
+    padding: '11px 0',
+    fontSize: 14,
+    fontWeight: 500,
+    cursor: 'pointer',
+    width: '100%',
+  },
 }
 
 const updateStyles = {
