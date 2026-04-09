@@ -44,16 +44,20 @@ export async function signOutUser() {
  * Returns an unsubscribe function.
  */
 export function onAuthChange(callback) {
-  // Fire immediately with the current session
-  supabase.auth.getSession().then(({ data: { session } }) => {
-    callback(session?.user ?? null);
-  });
+  let initialised = false
 
   const {
     data: { subscription },
   } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(session?.user ?? null);
-  });
+    initialised = true
+    callback(session?.user ?? null)
+  })
 
-  return () => subscription.unsubscribe();
+  // onAuthStateChange doesn't fire on a plain page refresh if there's an
+  // existing session — getSession() bootstraps that case.
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (!initialised) callback(session?.user ?? null)
+  })
+
+  return () => subscription.unsubscribe()
 }

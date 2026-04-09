@@ -68,3 +68,14 @@ export const idbSetGames = (games) => set('games', 'all', games)
 export const idbGetMap = (gameId) => get('maps', gameId)
 export const idbSetMap = (gameId, mapData) => set('maps', gameId, mapData)
 export const idbDeleteMap = (gameId) => del('maps', gameId)
+
+// ── Clear all stores (used on sign-out / account switch) ──────
+export function idbClearAll() {
+  return openDB().then(db => Promise.all(
+    STORES.map(store => new Promise((resolve, reject) => {
+      const req = db.transaction(store, 'readwrite').objectStore(store).clear()
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    }))
+  ))
+}

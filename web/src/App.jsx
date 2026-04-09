@@ -12,7 +12,17 @@ import { Menu, X, LogOut, User } from './components/Icons.jsx'
 import WelcomeScreen from './components/WelcomeScreen.jsx'
 import { onAuthChange, signOutUser } from './firebase.js'
 import { loadUserData, saveGamesToCloud, saveProgressToCloud, saveSettingsToCloud, saveUserProfile } from './utils/cloudSync.js'
-import { idbGetGames, idbSetGames, idbSetMap, idbSet } from './utils/idb.js'
+import { idbGetGames, idbSetGames, idbSetMap, idbSet, idbClearAll } from './utils/idb.js'
+
+// Remove only app data — preserve Supabase's sb-* auth keys so the session survives a refresh
+function clearAppLocalStorage() {
+  const toRemove = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key.startsWith('sb-')) toRemove.push(key)
+  }
+  toRemove.forEach(k => localStorage.removeItem(k))
+}
 
 export default function App() {
   const [user, setUser] = useState(undefined) // undefined = loading, null = signed out
@@ -25,12 +35,21 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [syncingGames, setSyncingGames] = useState(false)
   const [manageOpenPresets, setManageOpenPresets] = useState(false)
+  const currentUserIdRef = useRef(undefined)
 
   // ── Auth state ──────────────────────────────────────────────
   useEffect(() => {
     return onAuthChange(async (u) => {
+      const newId = u?.id ?? null
+      // Skip if the user hasn't actually changed (e.g. TOKEN_REFRESHED)
+      if (newId === currentUserIdRef.current) return
+      currentUserIdRef.current = newId
+
       setUser(u)
       if (u) {
+        // Clear any previous user's local data before loading this user's data
+        await idbClearAll()
+        clearAppLocalStorage()
         // Save profile (no-op for Supabase — stored in auth.user_metadata)
         await saveUserProfile(u.id, {})
         // Load user data from Supabase into IDB/localStorage
@@ -145,7 +164,8 @@ export default function App() {
   }, [games, handleSaveGames, handleSelectGame, navigate])
 
   const handleSignOut = async () => {
-    localStorage.clear()
+    await idbClearAll()
+    clearAppLocalStorage()
     await signOutUser()
   }
 
