@@ -5,5 +5,12 @@
     "type": "full",
     "description": "Complete walkthrough with Kanto map and steps",
     "author": "R2D2"
+  },
+  {
+    "filename": "emerald-full",
+    "name": "Pokemon Emerald",
+    "type": "full",
+    "description": "Complete walkthrough with map and steps",
+    "author": "R2D2"
   }
 ]
