@@ -111,11 +111,16 @@ async function fetchOnePokemon(id, versionGroup) {
   }
 }
 
-export default function PokedexView({ game, fetchKey, initialSearch, onInitialSearchConsumed }) {
+export default function PokedexView({ game, fetchKey, initialSearch, onInitialSearchConsumed, autoGen }) {
   const [pokemon, setPokemon] = useState([])
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 })
+
+  // Sync auto-generation progress from App.jsx into local state
+  const isAutoGenerating = !!autoGen
+  const effectiveGenerating = generating || isAutoGenerating
+  const effectiveGenProgress = isAutoGenerating ? { current: autoGen.current, total: autoGen.total } : genProgress
   const [search, setSearch] = useState('')
   const [typeFilters, setTypeFilters] = useState([])
   const [selectedPokemon, setSelectedPokemon] = useState(null)
@@ -253,8 +258,8 @@ export default function PokedexView({ game, fetchKey, initialSearch, onInitialSe
           <input style={styles.searchInput}
             placeholder="Search by name, #, or location..."
             value={search} onChange={e => setSearch(e.target.value)} />
-          {hasData && !generating && (
-            <button style={styles.regenBtn} className="pdx-regen" onClick={() => setShowRegenConfirm(true)} disabled={generating || loading} title="Re-fetch Pokédex data">
+          {hasData && !effectiveGenerating && (
+            <button style={styles.regenBtn} className="pdx-regen" onClick={() => setShowRegenConfirm(true)} disabled={effectiveGenerating || loading} title="Re-fetch Pokédex data">
               <RefreshCw size={13} /><span>Regenerate</span>
             </button>
           )}
@@ -277,17 +282,17 @@ export default function PokedexView({ game, fetchKey, initialSearch, onInitialSe
       </div>
 
       {/* Generation progress */}
-      {generating && (
+      {effectiveGenerating && (
         <div style={styles.genProgress}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center' }}>
             <span style={{ fontSize: 13, fontWeight: 500 }}>Fetching Pokédex data from PokéAPI...</span>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{genProgress.current} / {genProgress.total}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{effectiveGenProgress.current} / {effectiveGenProgress.total}</span>
           </div>
           <div style={styles.progressTrack}>
-            <div style={{ ...styles.progressFill, width: `${genProgress.total > 0 ? (genProgress.current / genProgress.total * 100) : 0}%` }} />
+            <div style={{ ...styles.progressFill, width: `${effectiveGenProgress.total > 0 ? (effectiveGenProgress.current / effectiveGenProgress.total * 100) : 0}%` }} />
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            {genProgress.total > 0 ? `${Math.round(genProgress.current / genProgress.total * 100)}% complete` : 'Starting...'}
+            {effectiveGenProgress.total > 0 ? `${Math.round(effectiveGenProgress.current / effectiveGenProgress.total * 100)}% complete` : 'Starting...'}
           </div>
         </div>
       )}
@@ -300,7 +305,7 @@ export default function PokedexView({ game, fetchKey, initialSearch, onInitialSe
       )}
 
       {/* No data state */}
-      {!loading && !generating && !hasData && game?.pokedexFile && (
+      {!loading && !effectiveGenerating && !hasData && game?.pokedexFile && (
         <div style={styles.noData}>
           <div style={{ marginBottom: 16, color: 'var(--text-muted)', opacity: 0.5 }}>
             <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>

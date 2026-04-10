@@ -22,6 +22,7 @@ import { onAuthChange, signOutUser } from './firebase.js'
 import { loadUserData, saveGamesToCloud, saveMapToCloud, pushLocalDataToCloud, saveUserProfile } from './utils/cloudSync.js'
 import { idbGetGames, idbSetGames, idbSetMap, idbSet, idbClearAll } from './utils/idb.js'
 import { mapData as defaultMapData } from './data/index.js'
+import { generatePokedex, hasPokedexData } from './utils/pokedex.js'
 
 // Remove only app data — preserve Supabase's sb-* auth keys so the session survives a refresh
 function clearAppLocalStorage() {
@@ -49,6 +50,8 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [syncingGames, setSyncingGames] = useState(false)
   const [manageOpenPresets, setManageOpenPresets] = useState(false)
+  // pokedexGen: null | { gameId, gameName, current, total }
+  const [pokedexGen, setPokedexGen] = useState(null)
   const currentUserIdRef = useRef(undefined)
 
   // ── Auth state ──────────────────────────────────────────────
@@ -90,6 +93,20 @@ export default function App() {
 
         // If cloud has no data yet, push all local data up so it's persisted
         pushLocalDataToCloud(u.id, loadedGames, defaultMapData)
+
+        // Auto-generate Pokédex for any game that has pokedexFile but no cached data
+        for (const game of loadedGames) {
+          if (!game.pokedexFile) continue
+          const alreadyHas = await hasPokedexData(game)
+          if (alreadyHas) continue
+          const total = game.totalPokemon || 151
+          setPokedexGen({ gameId: game.id, gameName: game.title, current: 0, total })
+          await generatePokedex(game, (current, total) => {
+            setPokedexGen({ gameId: game.id, gameName: game.title, current, total })
+          })
+          setPokedexGen(null)
+          setFetchKey(k => k + 1) // tell PokedexView to reload now that data exists
+        }
       } else if (u === null) {
         // Signed out — clear everything
         await idbClearAll()
@@ -249,7 +266,8 @@ export default function App() {
         return <MapView game={selectedGame} onNavigateToPokemon={handleNavigateToPokemon} user={user} />
       case 'pokedex':
         return <PokedexView game={selectedGame} fetchKey={fetchKey}
-          initialSearch={pokedexInitialSearch} onInitialSearchConsumed={() => setPokedexInitialSearch('')} />
+          initialSearch={pokedexInitialSearch} onInitialSearchConsumed={() => setPokedexInitialSearch('')}
+          autoGen={pokedexGen?.gameId === selectedGame?.id ? pokedexGen : null} />
       case 'types':
         return <TypeChartView />
       default:
@@ -348,8 +366,46 @@ export default function App() {
             }}
           />
         )}
+
+        {/* ── Pokédex generation toast ── */}
+        {pokedexGen && <PokedexToast toast={pokedexGen} />}
       </div>
     </DialogProvider>
+  )
+}
+
+function PokedexToast({ toast }) {
+  const pct = toast.total > 0 ? Math.round((toast.current / toast.total) * 100) : 0
+  return (
+    <div style={{
+      position: 'fixed', bottom: 80, right: 20, zIndex: 99999,
+      background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
+      borderRadius: 12, padding: '12px 16px', width: 260,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+      display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{
+          width: 8, height: 8, borderRadius: '50%',
+          background: 'var(--game-color)', animation: 'pulse 1s infinite', flexShrink: 0,
+        }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>
+          Building Pokédex
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+          {pct}%
+        </span>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 2 }}>
+        {toast.gameName} · {toast.current} / {toast.total} Pokémon
+      </div>
+      <div style={{ height: 4, background: 'var(--bg-tertiary)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', background: 'var(--game-color)', borderRadius: 2,
+          width: `${pct}%`, transition: 'width 0.3s ease',
+        }} />
+      </div>
+    </div>
   )
 }
 
