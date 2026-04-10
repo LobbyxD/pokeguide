@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { DialogProvider } from './components/Dialog.jsx'
-import Sidebar, { NAV_ITEMS } from './components/Sidebar.jsx'
+import Sidebar, { NAV_ITEMS, MOBILE_NAV_ITEMS } from './components/Sidebar.jsx'
 import OptionsModal from './components/OptionsModal.jsx'
 import AuthPage from './components/AuthPage.jsx'
 import WalkthroughView from './views/WalkthroughView.jsx'
@@ -9,10 +9,19 @@ import PokedexView from './views/PokedexView.jsx'
 import TypeChartView from './views/TypeChartView.jsx'
 import ManageView from './views/ManageView.jsx'
 import { Menu, X, LogOut, User } from './components/Icons.jsx'
+
+const GamesIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="6" width="20" height="12" rx="2"/>
+    <line x1="12" y1="10" x2="12" y2="14"/><line x1="10" y1="12" x2="14" y2="12"/>
+    <circle cx="7" cy="12" r="1" fill="currentColor" stroke="none"/>
+  </svg>
+)
 import WelcomeScreen from './components/WelcomeScreen.jsx'
 import { onAuthChange, signOutUser } from './firebase.js'
-import { loadUserData, saveGamesToCloud, saveProgressToCloud, saveSettingsToCloud, saveUserProfile } from './utils/cloudSync.js'
+import { loadUserData, saveGamesToCloud, saveMapToCloud, pushLocalDataToCloud, saveUserProfile } from './utils/cloudSync.js'
 import { idbGetGames, idbSetGames, idbSetMap, idbSet, idbClearAll } from './utils/idb.js'
+import { mapData as defaultMapData } from './data/index.js'
 
 // Remove only app data — preserve Supabase's sb-* auth keys so the session survives a refresh
 function clearAppLocalStorage() {
@@ -26,7 +35,12 @@ function clearAppLocalStorage() {
 
 export default function App() {
   const [user, setUser] = useState(undefined) // undefined = loading, null = signed out
-  const [activeView, setActiveView] = useState('walkthrough')
+  const [dataLoading, setDataLoading] = useState(true)
+  const [activeView, setActiveView] = useState(() => {
+    const saved = localStorage.getItem('pg_last_view')
+    const valid = ['walkthrough', 'map', 'pokedex', 'types', 'manage']
+    return valid.includes(saved) ? saved : 'walkthrough'
+  })
   const [selectedGame, setSelectedGame] = useState(null)
   const [games, setGames] = useState([])
   const [showOptions, setShowOptions] = useState(false)
@@ -41,32 +55,48 @@ export default function App() {
   useEffect(() => {
     return onAuthChange(async (u) => {
       const newId = u?.id ?? null
-      // Skip if the user hasn't actually changed (e.g. TOKEN_REFRESHED)
-      if (newId === currentUserIdRef.current) return
+      const prevId = currentUserIdRef.current
+
+      // Skip if the user hasn't actually changed (e.g. TOKEN_REFRESHED, same session refresh)
+      if (newId === prevId) return
       currentUserIdRef.current = newId
 
       setUser(u)
       if (u) {
-        // Clear any previous user's local data before loading this user's data
-        await idbClearAll()
-        clearAppLocalStorage()
-        // Save profile (no-op for Supabase — stored in auth.user_metadata)
-        await saveUserProfile(u.id, {})
-        // Load user data from Supabase into IDB/localStorage
+        setDataLoading(true)
+        // Only wipe local data when switching to a *different* account.
+        // On a same-browser refresh prevId is undefined → don't wipe, we'll merge from cloud.
+        const switchingAccounts = prevId !== undefined && prevId !== null && prevId !== newId
+        if (switchingAccounts) {
+          await idbClearAll()
+          clearAppLocalStorage()
+        }
+
+        // Load from Supabase — if a row exists it overwrites local, if not we keep what's local
         await loadUserData(u.id)
-        // Now read games from IDB
+
+        // Read games from IDB (may be from cloud restore or pre-existing local data)
+        let loadedGames = []
         try {
-          const loadedGames = (await idbGetGames()) || []
+          loadedGames = (await idbGetGames()) || []
           setGames(loadedGames)
           setSelectedGame(loadedGames[0] || null)
         } catch {
           setGames([])
           setSelectedGame(null)
         }
+
+        setDataLoading(false)
+
+        // If cloud has no data yet, push all local data up so it's persisted
+        pushLocalDataToCloud(u.id, loadedGames, defaultMapData)
       } else if (u === null) {
-        // Signed out — clear local state
+        // Signed out — clear everything
+        await idbClearAll()
+        clearAppLocalStorage()
         setGames([])
         setSelectedGame(null)
+        setDataLoading(false)
       }
     })
   }, [])
@@ -98,7 +128,10 @@ export default function App() {
   }, [showOptions])
 
   // ── Navigation ──────────────────────────────────────────────
-  const navigate = useCallback((view) => setActiveView(view), [])
+  const navigate = useCallback((view) => {
+    setActiveView(view)
+    localStorage.setItem('pg_last_view', view)
+  }, [])
 
   // ── Keyboard shortcuts ──────────────────────────────────────
   useEffect(() => {
@@ -154,19 +187,21 @@ export default function App() {
     }
     const newGames = [...games, gameData]
     await handleSaveGames(newGames)
-    if (preset.map) await idbSetMap(id, preset.map)
+    if (preset.map) {
+      await idbSetMap(id, preset.map)
+      if (user) saveMapToCloud(user.id, id, preset.map)
+    }
     if (preset.pokedex && gameData.pokedexFile) {
       await idbSet(id, preset.pokedex)
       localStorage.removeItem(`pg_pokedex_${id}`)
     }
     handleSelectGame(gameData)
     navigate('walkthrough')
-  }, [games, handleSaveGames, handleSelectGame, navigate])
+  }, [games, handleSaveGames, handleSelectGame, navigate, user])
 
   const handleSignOut = async () => {
-    await idbClearAll()
-    clearAppLocalStorage()
     await signOutUser()
+    // onAuthChange(null) will fire and clear IDB + localStorage
   }
 
   // ── Loading state ───────────────────────────────────────────
@@ -192,10 +227,12 @@ export default function App() {
 
   // ── Main app ────────────────────────────────────────────────
   const renderView = () => {
+    if (dataLoading) return <AppSkeleton />
+
     // Always allow Manage view — it handles the empty-game state itself
     if (activeView === 'manage') {
       return <ManageView games={games} selectedGame={selectedGame} onSaveGames={handleSaveGames} onSelectGame={handleSelectGame}
-        openPresets={manageOpenPresets} onOpenPresetsConsumed={() => setManageOpenPresets(false)} />
+        openPresets={manageOpenPresets} onOpenPresetsConsumed={() => setManageOpenPresets(false)} user={user} />
     }
 
     if (!selectedGame) return (
@@ -209,7 +246,7 @@ export default function App() {
       case 'walkthrough':
         return <WalkthroughView game={selectedGame} games={games} onSaveGames={handleSaveGames} user={user} />
       case 'map':
-        return <MapView game={selectedGame} onNavigateToPokemon={handleNavigateToPokemon} />
+        return <MapView game={selectedGame} onNavigateToPokemon={handleNavigateToPokemon} user={user} />
       case 'pokedex':
         return <PokedexView game={selectedGame} fetchKey={fetchKey}
           initialSearch={pokedexInitialSearch} onInitialSearchConsumed={() => setPokedexInitialSearch('')} />
@@ -283,7 +320,7 @@ export default function App() {
 
         {/* ── Mobile bottom nav ── */}
         <nav className="mobile-nav">
-          {NAV_ITEMS.map(({ id, label, Icon }) => (
+          {MOBILE_NAV_ITEMS.map(({ id, label, Icon }) => (
             <button key={id} className={`mobile-nav-btn ${activeView === id ? 'active' : ''}`}
               onClick={() => { navigate(id); setSidebarOpen(false) }}
               style={{ color: activeView === id ? (selectedGame?.color || 'var(--game-color)') : undefined }}>
@@ -291,26 +328,77 @@ export default function App() {
               <span style={{ fontSize: 10 }}>{label}</span>
             </button>
           ))}
+          {/* Games button — opens sidebar where game switcher + Manage live */}
+          <button className={`mobile-nav-btn ${sidebarOpen ? 'active' : ''}`}
+            onClick={() => setSidebarOpen(o => !o)}
+            style={{ color: sidebarOpen ? (selectedGame?.color || 'var(--game-color)') : undefined }}>
+            <GamesIcon />
+            <span style={{ fontSize: 10 }}>Games</span>
+          </button>
         </nav>
 
         {/* ── Options modal ── */}
         {showOptions && (
           <OptionsModal
             onClose={() => setShowOptions(false)}
+            user={user}
             onThemeChange={(theme) => {
               if (theme) document.body.setAttribute('data-theme', theme)
               else document.body.removeAttribute('data-theme')
-              if (user) {
-                try {
-                  const settings = JSON.parse(localStorage.getItem('pg_settings') || '{}')
-                  saveSettingsToCloud(user.id, settings)
-                } catch {}
-              }
             }}
           />
         )}
       </div>
     </DialogProvider>
+  )
+}
+
+function AppSkeleton() {
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-primary)' }}>
+      <style>{`
+        @keyframes shimmer {
+          0% { background-position: -600px 0 }
+          100% { background-position: 600px 0 }
+        }
+        .skel {
+          background: linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-tertiary) 50%, var(--bg-secondary) 75%);
+          background-size: 600px 100%;
+          animation: shimmer 1.4s infinite linear;
+          border-radius: 6px;
+        }
+      `}</style>
+      {/* Fake sidebar + content */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* Sidebar skeleton */}
+        <div style={{ width: 220, flexShrink: 0, background: 'var(--bg-secondary)', borderRight: '1px solid var(--border-color)', padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="skel" style={{ height: 14, width: '60%' }} />
+          {[1,2,3].map(i => (
+            <div key={i} style={{ borderRadius: 8, padding: '10px 12px', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div className="skel" style={{ height: 13, width: '80%' }} />
+              <div className="skel" style={{ height: 10, width: '50%' }} />
+            </div>
+          ))}
+          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {[1,2,3,4,5].map(i => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px' }}>
+                <div className="skel" style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0 }} />
+                <div className="skel" style={{ height: 12, flex: 1 }} />
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Main content skeleton */}
+        <div style={{ flex: 1, padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="skel" style={{ height: 28, width: 200 }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {[1,2,3,4,5].map(i => (
+              <div key={i} className="skel" style={{ height: 52, width: '100%', borderRadius: 8 }} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

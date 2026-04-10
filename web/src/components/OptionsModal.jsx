@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { X } from './Icons.jsx'
 import { useDialog } from './Dialog.jsx'
+import { saveSettingsToCloud, saveMapSettingsToCloud } from '../utils/cloudSync.js'
 
 const THEMES = [
   { id: '', label: 'Dark', description: 'Classic deep navy dark theme' },
@@ -16,7 +17,7 @@ function hexToRgba(hex, alpha = 1) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-export default function OptionsModal({ onClose, onThemeChange }) {
+export default function OptionsModal({ onClose, onThemeChange, user }) {
   const { confirm } = useDialog()
   const [activeTab, setActiveTab] = useState('appearance')
   const [theme, setTheme] = useState('')
@@ -44,6 +45,7 @@ export default function OptionsModal({ onClose, onThemeChange }) {
       const settings = JSON.parse(localStorage.getItem('pg_settings') || '{}')
       settings.theme = t
       localStorage.setItem('pg_settings', JSON.stringify(settings))
+      if (user) saveSettingsToCloud(user.id, settings)
     } catch {}
   }
 
@@ -51,6 +53,7 @@ export default function OptionsModal({ onClose, onThemeChange }) {
     const updated = { ...mapSettings, [key]: value }
     setMapSettings(updated)
     localStorage.setItem('pg_map_settings', JSON.stringify(updated))
+    if (user) saveMapSettingsToCloud(user.id, updated)
     if (key === 'questMarkerColor') {
       document.documentElement.style.setProperty('--quest-marker-color', value)
     }
@@ -70,12 +73,18 @@ export default function OptionsModal({ onClose, onThemeChange }) {
       title: 'Reset All Settings', danger: true, confirmLabel: 'Reset',
     })
     if (ok) {
+      const defaultSettings = { theme: '' }
+      const defaultMapSettings = { highlightFill: '#4299e1', highlightFillOpacity: 0.3, highlightStroke: '#4299e1', questMarkerColor: '#f6ad55', questMarkerOpacity: 0.9 }
       localStorage.removeItem('pg_settings')
       localStorage.removeItem('pg_map_settings')
       document.body.removeAttribute('data-theme')
       onThemeChange('')
       setTheme('')
-      setMapSettings({ highlightFill: '#4299e1', highlightFillOpacity: 0.3, highlightStroke: '#4299e1', questMarkerColor: '#f6ad55', questMarkerOpacity: 0.9 })
+      setMapSettings(defaultMapSettings)
+      if (user) {
+        saveSettingsToCloud(user.id, defaultSettings)
+        saveMapSettingsToCloud(user.id, defaultMapSettings)
+      }
     }
   }
 

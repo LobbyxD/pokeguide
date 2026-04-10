@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Plus, X, ChevronUp, ChevronDown, Check, Loader, Settings, Map, Download, Upload, Package, Globe, MapPin, Pencil } from '../components/Icons.jsx'
+import { Plus, X, ChevronUp, ChevronDown, Check, Loader, Settings, Map, Download, Upload, Package, Globe, MapPin, Pencil, RotateCcw } from '../components/Icons.jsx'
 import ColorPicker from '../components/ColorPicker.jsx'
 import { mapData as defaultMapData } from '../data/index.js'
 import { useDialog } from '../components/Dialog.jsx'
 import { idbGet, idbSet, idbSetMap, idbGetMap } from '../utils/idb.js'
+import { saveMapToCloud } from '../utils/cloudSync.js'
 
 const OFFICIAL_PRESETS_URL = 'https://raw.githubusercontent.com/LobbyxD/pokeguide/main/presets/index.json'
 
@@ -70,7 +71,7 @@ function pickFile() {
   })
 }
 
-export default function ManageView({ games, selectedGame, onSaveGames, onSelectGame, openPresets, onOpenPresetsConsumed }) {
+export default function ManageView({ games, selectedGame, onSaveGames, onSelectGame, openPresets, onOpenPresetsConsumed, user }) {
   const { confirm, alert } = useDialog()
   const [activeGame, setActiveGame] = useState(selectedGame || games[0] || null)
   const [activeTab, setActiveTab] = useState('game')
@@ -103,11 +104,15 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
     setOfficialLoading(false)
   }
 
+  // Auto-fetch presets whenever the New Game panel opens
+  useEffect(() => {
+    if (addingNew) fetchOfficialPresets()
+  }, [addingNew]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // When App tells us to open the preset picker (e.g. from welcome screen "Browse Official Presets")
   useEffect(() => {
     if (openPresets) {
       setAddingNew(true)
-      fetchOfficialPresets()
       if (onOpenPresetsConsumed) onOpenPresetsConsumed()
     }
   }, [openPresets]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -187,7 +192,10 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
       const gameData = gameBase
       const newGames = [...games, gameData]
       onSaveGames(newGames)
-      if (preset.map) await idbSetMap(id, preset.map)
+      if (preset.map) {
+        await idbSetMap(id, preset.map)
+        if (user) saveMapToCloud(user.id, id, preset.map)
+      }
       if (preset.pokedex && gameData.pokedexFile) {
         await idbSet(id, preset.pokedex)
         localStorage.removeItem(`pg_pokedex_${id}`)
@@ -359,18 +367,60 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
 
   // ── Render ────────────────────────────────────────────────
   return (
-    <div style={styles.container}>
+    <div className="mgv-container" style={styles.container}>
+      <style>{`
+        @keyframes shimmer {
+          0% { background-position: -400px 0 }
+          100% { background-position: 400px 0 }
+        }
+        .mgv-quick-btn:hover { border-color: var(--game-color) !important; background: var(--bg-tertiary) !important; }
+        .mgv-preset-card:hover { border-color: var(--game-color) !important; background: var(--bg-tertiary) !important; }
+        @media (max-width: 768px) {
+          .mgv-container { flex-direction: column !important; }
+          .mgv-left {
+            width: 100% !important;
+            height: auto !important;
+            flex-shrink: 0 !important;
+            border-right: none !important;
+            border-bottom: 1px solid var(--border-color) !important;
+            flex-direction: row !important;
+            overflow: hidden !important;
+          }
+          .mgv-left-header { padding: 8px 10px !important; flex-shrink: 0; }
+          .mgv-game-list {
+            flex: 1 !important;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            display: flex !important;
+            flex-direction: row !important;
+            padding: 6px 6px !important;
+            gap: 6px !important;
+          }
+          .mgv-game-card {
+            min-width: 110px !important;
+            max-width: 150px !important;
+            flex-shrink: 0 !important;
+            border-left: 3px solid transparent !important;
+            border-bottom: none !important;
+            border-radius: 6px !important;
+            padding: 8px 10px !important;
+          }
+          .mgv-game-card-meta { display: none !important; }
+          .mgv-right { min-height: 0; }
+        }
+      `}</style>
       {/* Left panel */}
-      <div style={styles.leftPanel}>
-        <div style={styles.leftHeader}>
+      <div className="mgv-left" style={styles.leftPanel}>
+        <div className="mgv-left-header" style={styles.leftHeader}>
           <span style={styles.leftTitle}>Games</span>
           <button style={{ ...styles.addBtn, display: 'flex', alignItems: 'center', gap: 4 }} onClick={addGame}>
             <Plus size={12} /> Add
           </button>
         </div>
-        <div style={styles.gameList}>
+        <div className="mgv-game-list" style={styles.gameList}>
           {games.map(game => (
             <div key={game.id}
+              className="mgv-game-card"
               style={{ ...styles.gameCard, ...(activeGame?.id === game.id ? styles.gameCardActive : {}), borderLeft: `4px solid ${game.color}` }}
               onClick={() => selectAndSet(game)}>
               <div style={styles.gameCardHeader}>
@@ -379,7 +429,7 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
                   <X size={13} />
                 </button>
               </div>
-              <div style={styles.gameCardMeta}>
+              <div className="mgv-game-card-meta" style={styles.gameCardMeta}>
                 <span style={styles.gameMeta}>{game.region}</span>
                 <span style={styles.gameMeta}>{(game.steps || []).length} steps</span>
               </div>
@@ -389,65 +439,89 @@ export default function ManageView({ games, selectedGame, onSaveGames, onSelectG
       </div>
 
       {/* Right panel */}
-      <div style={{ ...styles.rightPanel, position: 'relative' }}>
+      <div className="mgv-right" style={{ ...styles.rightPanel, position: 'relative' }}>
 
         {/* Add-new overlay */}
         {addingNew && (
           <div style={styles.presetOverlay}>
             <div style={styles.presetPanel}>
+              {/* Header */}
               <div style={styles.presetPanelHeader}>
-                <span style={styles.rightTitle}>New Game</span>
-                <button style={styles.cancelStepBtn} onClick={() => setAddingNew(false)}><X size={13} /></button>
+                <div>
+                  <div style={styles.rightTitle}>Add New Game</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Choose a starting point for your game</div>
+                </div>
+                {games.length > 0 && (
+                  <button style={styles.closeIconBtn} onClick={() => setAddingNew(false)}><X size={16} /></button>
+                )}
               </div>
-              <div style={styles.presetPanelContent}>
-                <button style={styles.blankPresetBtn} onClick={createBlankGame}>
-                  <Plus size={18} />
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>Blank Game</span>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Start with no data</span>
-                </button>
 
-                {/* Import from file */}
-                <button style={styles.blankPresetBtn}
-                  onClick={async () => {
-                    const preset = await pickFile()
-                    if (preset) await createFromPreset(preset)
-                  }}>
-                  <Upload size={18} />
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>Import .pgpreset File</span>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Load from a local file</span>
-                </button>
+              <div style={styles.presetPanelContent}>
+                {/* Quick-start row */}
+                <div style={styles.quickStartRow}>
+                  <button className="mgv-quick-btn" style={styles.quickBtn} onClick={createBlankGame} disabled={presetBusy}>
+                    <div style={{ ...styles.quickIcon, background: 'rgba(255,255,255,0.06)' }}><Plus size={20} /></div>
+                    <div style={styles.quickLabel}>Blank Game</div>
+                    <div style={styles.quickSub}>Start from scratch</div>
+                  </button>
+                  <button className="mgv-quick-btn" style={styles.quickBtn}
+                    onClick={async () => { const p = await pickFile(); if (p) await createFromPreset(p) }}
+                    disabled={presetBusy}>
+                    <div style={{ ...styles.quickIcon, background: 'rgba(255,255,255,0.06)' }}><Upload size={20} /></div>
+                    <div style={styles.quickLabel}>Import File</div>
+                    <div style={styles.quickSub}>.pgpreset or .json</div>
+                  </button>
+                </div>
 
                 {/* Official Presets */}
-                <div style={styles.presetSectionLabel}>Official Presets</div>
-                {officialPresets === null ? (
-                  <button style={{ ...styles.blankPresetBtn, flexDirection: 'row', gap: 10, justifyContent: 'flex-start', padding: '14px 16px' }}
-                    disabled={officialLoading || presetBusy} onClick={fetchOfficialPresets}>
-                    {officialLoading ? <Loader size={16} /> : <Globe size={16} />}
-                    <div style={{ textAlign: 'left' }}>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>Browse Official Presets</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Community presets from the PokeGuide repo</div>
-                    </div>
-                  </button>
+                <div style={styles.presetSectionLabel}>
+                  <Globe size={11} />
+                  Official Presets
+                  {officialLoading && <Loader size={11} style={{ marginLeft: 6 }} />}
+                  {!officialLoading && officialPresets && (
+                    <button style={styles.refreshBtn} onClick={fetchOfficialPresets} title="Refresh">
+                      <RotateCcw size={11} />
+                    </button>
+                  )}
+                </div>
+
+                {officialLoading && !officialPresets ? (
+                  // Skeleton cards while loading
+                  <div style={styles.presetGrid}>
+                    {[1,2,3,4].map(i => (
+                      <div key={i} style={{ ...styles.presetCard, cursor: 'default', gap: 8 }}>
+                        <div style={skeletonStyle} />
+                        <div style={{ ...skeletonStyle, width: '60%', height: 10 }} />
+                      </div>
+                    ))}
+                  </div>
                 ) : officialError ? (
-                  <div style={{ color: '#fc8181', fontSize: 12, padding: '8px 0' }}>{officialError}</div>
+                  <div style={styles.errorRow}>
+                    <span>{officialError}</span>
+                    <button style={styles.retryBtn} onClick={fetchOfficialPresets}>Retry</button>
+                  </div>
                 ) : officialPresets?.length === 0 ? (
                   <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: '8px 0' }}>No official presets found.</div>
-                ) : (
+                ) : officialPresets ? (
                   <div style={styles.presetGrid}>
                     {officialPresets.map(item => (
-                      <button key={item.filename} style={styles.presetCard}
+                      <button key={item.filename} className="mgv-preset-card" style={styles.presetCard}
                         disabled={officialLoading || presetBusy}
                         onClick={() => loadOfficialPreset(item)}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <Globe size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                          <span style={{ fontWeight: 600, fontSize: 13, flex: 1, textAlign: 'left' }}>{item.title || item.name}</span>
-                          {officialLoading && <Loader size={12} />}
+                        <div style={styles.presetCardTop}>
+                          <span style={styles.presetCardTitle}>{item.title || item.name}</span>
+                          {(officialLoading || presetBusy) && <Loader size={12} style={{ flexShrink: 0 }} />}
                         </div>
-                        {item.description && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, textAlign: 'left' }}>{item.description}</div>}
+                        {item.description && (
+                          <div style={styles.presetCardDesc}>{item.description}</div>
+                        )}
+                        {item.author && (
+                          <div style={styles.presetCardAuthor}>by {item.author}</div>
+                        )}
                       </button>
                     ))}
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
@@ -673,6 +747,13 @@ function Field({ label, children }) {
   )
 }
 
+const skeletonStyle = {
+  height: 14, borderRadius: 4, width: '100%',
+  background: 'linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-hover, rgba(255,255,255,0.08)) 50%, var(--bg-tertiary) 75%)',
+  backgroundSize: '400px 100%',
+  animation: 'shimmer 1.3s infinite linear',
+}
+
 const styles = {
   container: { height: '100%', display: 'flex', overflow: 'hidden' },
   leftPanel: { width: 220, flexShrink: 0, background: 'var(--bg-secondary)', borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
@@ -690,13 +771,25 @@ const styles = {
   rightPanel: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   presetOverlay: { position: 'absolute', inset: 0, background: 'var(--bg-primary)', zIndex: 10, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   presetPanel: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-  presetPanelHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border-color)' },
-  presetPanelContent: { flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 },
-  rightTitle: { fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' },
-  blankPresetBtn: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '18px 16px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 10, cursor: 'pointer', transition: 'all 0.15s', color: 'var(--text-primary)', textAlign: 'center' },
-  presetSectionLabel: { fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4, marginBottom: 2 },
-  presetGrid: { display: 'flex', flexDirection: 'column', gap: 6 },
-  presetCard: { display: 'flex', flexDirection: 'column', padding: '10px 14px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8, cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s', color: 'var(--text-primary)' },
+  presetPanelHeader: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '18px 20px 14px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)' },
+  presetPanelContent: { flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: 16 },
+  rightTitle: { fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' },
+  closeIconBtn: { background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', borderRadius: 6 },
+  quickStartRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
+  quickBtn: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '20px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 12, cursor: 'pointer', color: 'var(--text-primary)', transition: 'border-color 0.15s, background 0.15s' },
+  quickIcon: { width: 44, height: 44, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--game-color)' },
+  quickLabel: { fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' },
+  quickSub: { fontSize: 11, color: 'var(--text-muted)' },
+  presetSectionLabel: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 },
+  refreshBtn: { background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center', borderRadius: 4, marginLeft: 2 },
+  presetGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 },
+  presetCard: { display: 'flex', flexDirection: 'column', gap: 4, padding: '12px 14px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 10, cursor: 'pointer', textAlign: 'left', transition: 'border-color 0.15s, background 0.15s', color: 'var(--text-primary)' },
+  presetCardTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  presetCardTitle: { fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', flex: 1 },
+  presetCardDesc: { fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 },
+  presetCardAuthor: { fontSize: 10, color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic' },
+  errorRow: { display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#fc8181', padding: '8px 0' },
+  retryBtn: { background: 'transparent', border: '1px solid #fc8181', color: '#fc8181', borderRadius: 5, padding: '3px 10px', fontSize: 11, cursor: 'pointer' },
   presetTypeBadge: { fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-tertiary)', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase' },
   emptyState: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', textAlign: 'center', padding: 40, gap: 8 },
   gameDetail: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },

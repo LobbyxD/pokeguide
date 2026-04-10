@@ -248,13 +248,13 @@ export default function PokedexView({ game, fetchKey, initialSearch, onInitialSe
   return (
     <div style={styles.container}>
       {/* Top bar */}
-      <div style={styles.topBar}>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' }}>
+      <div style={styles.topBar} className="pdx-topbar">
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' }} className="pdx-search-row">
           <input style={styles.searchInput}
             placeholder="Search by name, #, or location..."
             value={search} onChange={e => setSearch(e.target.value)} />
           {hasData && !generating && (
-            <button style={styles.regenBtn} onClick={() => setShowRegenConfirm(true)} disabled={generating || loading} title="Re-fetch Pokédex data">
+            <button style={styles.regenBtn} className="pdx-regen" onClick={() => setShowRegenConfirm(true)} disabled={generating || loading} title="Re-fetch Pokédex data">
               <RefreshCw size={13} /><span>Regenerate</span>
             </button>
           )}
@@ -330,7 +330,7 @@ export default function PokedexView({ game, fetchKey, initialSearch, onInitialSe
               {filteredPokemon.length} of {pokemon.length} Pokémon
             </div>
           )}
-          <div style={styles.grid}>
+          <div style={styles.grid} className="pdx-grid">
             {loading && Array.from({ length: 24 }).map((_, i) => <SkeletonCard key={i} />)}
             {!loading && filteredPokemon.map(p => (
               <PokemonCard key={p.id} pokemon={p} onClick={() => setSelectedPokemon(p)} />
@@ -364,7 +364,20 @@ export default function PokedexView({ game, fetchKey, initialSearch, onInitialSe
         </div>
       )}
 
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}.poke-card:hover{transform:translateY(-2px);border-color:var(--game-color)!important;box-shadow:0 4px 16px rgba(0,0,0,0.3);}`}</style>
+      <style>{`
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+        .poke-card:hover{transform:translateY(-2px);border-color:var(--game-color)!important;box-shadow:0 4px 16px rgba(0,0,0,0.3);}
+        @media(max-width:768px){
+          .pdx-grid{grid-template-columns:repeat(auto-fill,minmax(90px,1fr))!important;padding:10px!important;}
+          .pdx-topbar{padding:8px 10px!important;}
+          .pdx-search-row{flex-wrap:wrap;}
+          .pdx-regen{display:none!important;}
+          .pdx-detail-body{flex-direction:column!important;padding:12px!important;gap:16px!important;}
+          .pdx-detail-hero{flex-direction:column!important;align-items:center!important;text-align:center;padding:12px!important;}
+          .pdx-detail-main{min-width:0!important;width:100%;}
+          .pdx-locations{min-width:0!important;width:100%;}
+        }
+      `}</style>
     </div>
   )
 }
@@ -392,9 +405,9 @@ function PokemonDetail({ pokemon, allPokemon, onBack, onNavigate, game }) {
         </button>
         <span style={{ fontSize: 14, color: 'var(--text-muted)', fontFamily: 'monospace' }}>#{String(pokemon.id).padStart(3, '0')}</span>
       </div>
-      <div style={styles.detailBody}>
-        <div style={styles.detailMain}>
-          <div style={styles.detailHero}>
+      <div style={styles.detailBody} className="pdx-detail-body">
+        <div style={styles.detailMain} className="pdx-detail-main">
+          <div style={styles.detailHero} className="pdx-detail-hero">
             <div style={styles.spriteWrapper}>
               <img src={pokemon.sprite || `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pokemon.id}.png`}
                 alt={pokemon.name} style={styles.detailSprite} />
@@ -459,7 +472,7 @@ function PokemonDetail({ pokemon, allPokemon, onBack, onNavigate, game }) {
         </div>
 
         {pokemon.locations?.length > 0 && (
-          <div style={styles.locationsSection}>
+          <div style={styles.locationsSection} className="pdx-locations">
             <div style={styles.sectionTitle}>Locations in {game?.title}</div>
             <table style={styles.locTable}>
               <thead><tr><th style={styles.th}>Area</th><th style={styles.th}>Method</th><th style={styles.th}>Level</th></tr></thead>

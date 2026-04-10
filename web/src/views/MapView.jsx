@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { mapData as defaultMapData } from '../data/index.js'
 import { stepLocations } from '../data/index.js'
 import MapEditor from '../components/MapEditor.jsx'
-import { ZoomIn, ZoomOut, Home, RotateCw, ArrowLeftRight, Layers, Plus, Pencil, Type, ChevronRight } from '../components/Icons.jsx'
+import { ZoomIn, ZoomOut, Home, RotateCw, ArrowLeftRight, Layers, Plus, Pencil, Type, ChevronRight, Pin, MapPin } from '../components/Icons.jsx'
 import { writeStorage } from '../utils/store.js'
 import { idbGetMap, idbSetMap } from '../utils/idb.js'
+import { saveMapToCloud, saveProgressToCloud } from '../utils/cloudSync.js'
 
 const AREA_COLORS = {
   Town: '#f6e05e',
@@ -18,7 +19,7 @@ const AREA_COLORS = {
   Other: '#fbd38d',
 }
 
-export default function MapView({ game, onNavigateToPokemon }) {
+export default function MapView({ game, onNavigateToPokemon, user }) {
   const [scale, setScale] = useState(0.35)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
@@ -35,15 +36,45 @@ export default function MapView({ game, onNavigateToPokemon }) {
   const [showLabels, setShowLabels] = useState(false)
   const [showEditor, setShowEditor] = useState(false)
   const [customMapData, setCustomMapData] = useState(null)
+  const [mapLoading, setMapLoading] = useState(true)
+  const [imageLoaded, setImageLoaded] = useState(false)
   const [naturalImageSize, setNaturalImageSize] = useState(null)
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [stepPinned, setStepPinned] = useState(() => {
+    try { return localStorage.getItem('pg_map_step_pinned') === 'true' } catch { return false }
+  })
+
+  const togglePin = () => {
+    setStepPinned(p => {
+      const next = !p
+      try { localStorage.setItem('pg_map_step_pinned', String(next)) } catch {}
+      return next
+    })
+  }
+
+  // Detect mobile (touch-primary device or narrow screen)
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
 
   const containerRef = useRef(null)
   const mapCanvasRef = useRef(null)
   const svgRef = useRef(null)
+  const sidePanelRef = useRef(null)
   const scaleRef = useRef(scale)
   const panRef = useRef(pan)
   useEffect(() => { scaleRef.current = scale }, [scale])
   useEffect(() => { panRef.current = pan }, [pan])
+
+  // Scroll panel to top whenever a new area is selected so detail is immediately visible
+  useEffect(() => {
+    if (selectedArea && sidePanelRef.current) {
+      sidePanelRef.current.scrollTop = 0
+    }
+  }, [selectedArea])
 
   const gameMapData = customMapData || defaultMapData[game?.id]
   const areas = gameMapData?.areas || []
@@ -61,7 +92,10 @@ export default function MapView({ game, onNavigateToPokemon }) {
 
   const saveStep = (idx) => {
     setCurrentStepIdx(idx)
-    if (game) writeStorage(`pg_step_progress_${game.id}`, String(idx))
+    if (game) {
+      writeStorage(`pg_step_progress_${game.id}`, String(idx))
+      if (user) saveProgressToCloud(user.id, game.id, idx)
+    }
   }
 
   const steps = game?.steps || []
@@ -70,13 +104,20 @@ export default function MapView({ game, onNavigateToPokemon }) {
   const currentStepLoc = game?.stepLocs?.[currentStepIdx]
     || (game && stepLocations[game.id] ? stepLocations[game.id][currentStepIdx + 1] : null)
 
+  // Track whether we've done the initial center for the current game
+  const hasCenteredRef = useRef(false)
+  useEffect(() => { hasCenteredRef.current = false }, [game?.id])
+
   // Load custom map data
   useEffect(() => {
     if (!game) return
+    setMapLoading(true)
+    setImageLoaded(false)
     idbGetMap(game.id).then(mapObj => {
       setCustomMapData(mapObj || null)
-    }).catch(() => setCustomMapData(null))
-    setNaturalImageSize(null) // reset natural size when game changes
+      setMapLoading(false)
+    }).catch(() => { setCustomMapData(null); setMapLoading(false) })
+    setNaturalImageSize(null)
   }, [game?.id])
 
   // Determine which areas match search (by name OR pokemon)
@@ -114,6 +155,13 @@ export default function MapView({ game, onNavigateToPokemon }) {
 
   const mapImage = isHD ? (gameMapData?.imageHD || gameMapData?.image) : gameMapData?.image
 
+  // Synchronously reset imageLoaded when mapImage changes so SVG never shows before PNG
+  const prevMapImageRef = useRef(undefined)
+  if (prevMapImageRef.current !== mapImage) {
+    prevMapImageRef.current = mapImage
+    if (mapImage && imageLoaded) setImageLoaded(false)
+  }
+
   useEffect(() => {
     const handleWheel = (e) => {
       e.preventDefault()
@@ -133,14 +181,14 @@ export default function MapView({ game, onNavigateToPokemon }) {
     if (!el) return
     el.addEventListener('wheel', handleWheel, { passive: false })
     return () => el.removeEventListener('wheel', handleWheel)
-  // Re-run when gameMapData becomes available (canvas div appears after IDB load)
+  // Re-run when the canvas div is actually in the DOM (after IDB load + mapLoading clears)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!gameMapData])
+  }, [!!gameMapData, mapLoading])
 
   const handleMouseDown = (e) => {
     if (e.button !== 0) return
     setIsDragging(true)
-    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y })
+    setDragStart({ x: e.clientX - panRef.current.x, y: e.clientY - panRef.current.y })
   }
 
   const handleMouseMove = (e) => {
@@ -153,9 +201,145 @@ export default function MapView({ game, onNavigateToPokemon }) {
     setDragStart(null)
   }
 
+  // ── Touch handling ──────────────────────────────────────────
+  // All state is kept in refs so the handlers are stable (never recreated mid-drag).
+  // We call e.preventDefault() to own all touch events (stops scroll, stops the
+  // 300ms click delay). That means React's onClick never fires on SVG areas from
+  // a touch — so we detect taps ourselves in onEnd and call onTapArea directly.
+  const touchRef = useRef({
+    lastDist: null, lastMid: null,
+    dragStart: null, dragging: false,
+    startX: 0, startY: 0, hasMoved: false,
+  })
+
+  // Stable ref to the latest areas array so onTapArea can look up the full area object
+  const areasRef = useRef(areas)
+  useEffect(() => { areasRef.current = areas }, [areas])
+
+  // Called when a tap (no significant drag) ends on a specific point
+  const onTapArea = useCallback((clientX, clientY) => {
+    const el = document.elementFromPoint(clientX, clientY)
+    const g = el?.closest('[data-areaid]')
+    if (!g) {
+      setSelectedArea(null)
+      setPanelOpen(false)
+      return
+    }
+    const areaId = g.dataset.areaid
+    const tapped = areasRef.current.find(a => a.id === areaId)
+    if (!tapped) return
+    setSelectedArea(prev => {
+      if (prev?.id === areaId) { setPanelOpen(false); return null }
+      setPanelOpen(true)
+      return tapped
+    })
+  }, [])
+
+  useEffect(() => {
+    const getTouchDist = (t1, t2) => Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
+    const getTouchMid = (t1, t2, rect) => ({
+      x: (t1.clientX + t2.clientX) / 2 - rect.left,
+      y: (t1.clientY + t2.clientY) / 2 - rect.top,
+    })
+
+    const onStart = (e) => {
+      e.preventDefault()
+      const touches = Array.from(e.touches)
+      if (touches.length === 1) {
+        touchRef.current.lastDist = null
+        touchRef.current.lastMid = null
+        touchRef.current.startX = touches[0].clientX
+        touchRef.current.startY = touches[0].clientY
+        touchRef.current.hasMoved = false
+        touchRef.current.dragStart = { x: touches[0].clientX - panRef.current.x, y: touches[0].clientY - panRef.current.y }
+        touchRef.current.dragging = true
+        setIsDragging(true)
+      } else if (touches.length === 2) {
+        const rect = mapCanvasRef.current?.getBoundingClientRect()
+        touchRef.current.lastDist = getTouchDist(touches[0], touches[1])
+        touchRef.current.lastMid = rect ? getTouchMid(touches[0], touches[1], rect) : null
+        touchRef.current.hasMoved = true // treat pinch as "moved" so it's never a tap
+        touchRef.current.dragging = false
+        touchRef.current.dragStart = null
+        setIsDragging(false)
+        setDragStart(null)
+      }
+    }
+
+    const onMove = (e) => {
+      e.preventDefault()
+      const touches = Array.from(e.touches)
+      if (touches.length === 1 && touchRef.current.dragging && touchRef.current.dragStart) {
+        const dx = touches[0].clientX - touchRef.current.startX
+        const dy = touches[0].clientY - touchRef.current.startY
+        // Only mark as a drag after 6px movement — allows slight finger wobble on tap
+        if (!touchRef.current.hasMoved && Math.hypot(dx, dy) > 6) {
+          touchRef.current.hasMoved = true
+        }
+        const ds = touchRef.current.dragStart
+        setPan({ x: touches[0].clientX - ds.x, y: touches[0].clientY - ds.y })
+      } else if (touches.length === 2) {
+        const rect = mapCanvasRef.current?.getBoundingClientRect()
+        if (!rect) return
+        const dist = getTouchDist(touches[0], touches[1])
+        const mid = getTouchMid(touches[0], touches[1], rect)
+        if (touchRef.current.lastDist != null) {
+          const ratio = dist / touchRef.current.lastDist
+          const curScale = scaleRef.current
+          const newScale = Math.max(0.1, Math.min(5, curScale * ratio))
+          const scaleChange = newScale / curScale
+          const curPan = panRef.current
+          setPan({ x: mid.x - scaleChange * (mid.x - curPan.x), y: mid.y - scaleChange * (mid.y - curPan.y) })
+          setScale(newScale)
+        }
+        touchRef.current.lastDist = dist
+        touchRef.current.lastMid = mid
+      }
+    }
+
+    const onEnd = (e) => {
+      const remaining = Array.from(e.touches)
+      if (remaining.length === 0) {
+        const wasTap = !touchRef.current.hasMoved
+        const tapX = touchRef.current.startX
+        const tapY = touchRef.current.startY
+        touchRef.current.dragging = false
+        touchRef.current.dragStart = null
+        touchRef.current.lastDist = null
+        touchRef.current.lastMid = null
+        setIsDragging(false)
+        setDragStart(null)
+        if (wasTap) onTapArea(tapX, tapY)
+      } else if (remaining.length === 1) {
+        touchRef.current.lastDist = null
+        touchRef.current.lastMid = null
+        touchRef.current.startX = remaining[0].clientX
+        touchRef.current.startY = remaining[0].clientY
+        touchRef.current.hasMoved = true // coming off a pinch — not a tap
+        touchRef.current.dragStart = { x: remaining[0].clientX - panRef.current.x, y: remaining[0].clientY - panRef.current.y }
+        touchRef.current.dragging = true
+        setIsDragging(true)
+      }
+    }
+
+    const el = mapCanvasRef.current
+    if (!el) return
+    el.addEventListener('touchstart', onStart, { passive: false })
+    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchend', onEnd, { passive: false })
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+    }
+  // Re-run only when the canvas element appears (after IDB map load + mapLoading clears)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!gameMapData, mapLoading, onTapArea])
+
   const handleAreaClick = (e, area) => {
     e.stopPropagation()
     setSelectedArea(area.id === selectedArea?.id ? null : area)
+    if (isMobile) setPanelOpen(true)
   }
 
   const handleAreaHover = (e, area) => {
@@ -206,8 +390,19 @@ export default function MapView({ game, onNavigateToPokemon }) {
     setTimeout(() => setIsAnimating(false), 320)
   }
 
-  const zoomIn = () => setScale(s => Math.min(s * 1.2, 5))
-  const zoomOut = () => setScale(s => Math.max(s * 0.8, 0.1))
+  const zoomAroundCenter = (factor) => {
+    const el = mapCanvasRef.current
+    const cx = el ? el.clientWidth / 2 : 400
+    const cy = el ? el.clientHeight / 2 : 300
+    const curScale = scaleRef.current
+    const newScale = Math.max(0.1, Math.min(5, curScale * factor))
+    const scaleChange = newScale / curScale
+    const curPan = panRef.current
+    setPan({ x: cx - scaleChange * (cx - curPan.x), y: cy - scaleChange * (cy - curPan.y) })
+    setScale(newScale)
+  }
+  const zoomIn = () => zoomAroundCenter(1.2)
+  const zoomOut = () => zoomAroundCenter(0.8)
   const zoomReset = () => { setScale(0.35); setPan({ x: 0, y: 0 }) }
 
   const getTransform = () => {
@@ -253,6 +448,37 @@ export default function MapView({ game, onNavigateToPokemon }) {
     }
   }
 
+  // Center map on an area without changing zoom
+  const centerOnArea = useCallback((areaNameOrId) => {
+    const target = areas.find(a => a.name === areaNameOrId || a.id === areaNameOrId)
+    const targetShapes = target ? (target.shapes?.length > 0 ? target.shapes : target.polygon?.length > 0 ? [target.polygon] : []) : []
+    if (!target || targetShapes.length === 0) return
+
+    const allPts = targetShapes.flat()
+    const xs = allPts.map(p => p[0])
+    const ys = allPts.map(p => p[1])
+    const centerX = (Math.min(...xs) + Math.max(...xs)) / 2
+    const centerY = (Math.min(...ys) + Math.max(...ys)) / 2
+
+    const el = mapCanvasRef.current
+    const containerW = el?.clientWidth || 800
+    const containerH = el?.clientHeight || 600
+    const s = scaleRef.current
+
+    setIsAnimating(true)
+    setPan({ x: containerW / 2 - centerX * s, y: containerH / 2 - centerY * s })
+    setTimeout(() => setIsAnimating(false), 350)
+  }, [areas])
+
+  // For maps with no image, center on current step loc after map data loads
+  useEffect(() => {
+    if (mapLoading || hasCenteredRef.current || gameMapData?.image) return
+    if (currentStepLoc && areas.length > 0) {
+      hasCenteredRef.current = true
+      requestAnimationFrame(() => centerOnArea(currentStepLoc))
+    }
+  }, [mapLoading, areas.length, currentStepLoc]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Focus map on an area by name or id
   const focusOnArea = useCallback((areaNameOrId) => {
     const target = areas.find(a => a.name === areaNameOrId || a.id === areaNameOrId)
@@ -290,8 +516,13 @@ export default function MapView({ game, onNavigateToPokemon }) {
     const base = gameMapData || { areas: [], width: 1800, height: 1766 }
     const newMapData = { ...base, ...data }
     idbSetMap(game.id, newMapData)
+    if (user) saveMapToCloud(user.id, game.id, newMapData)
     setCustomMapData(newMapData)
     setShowEditor(false)
+  }
+
+  if (mapLoading) {
+    return <MapSkeleton />
   }
 
   if (!gameMapData) {
@@ -330,45 +561,60 @@ export default function MapView({ game, onNavigateToPokemon }) {
           <button style={styles.toolBtn} onClick={zoomOut} title="Zoom Out"><ZoomOut size={15} /></button>
           <button style={styles.toolBtn} onClick={zoomReset} title="Reset View"><Home size={15} /></button>
         </div>
-        <div style={styles.toolDivider} />
-        <div style={styles.toolGroup}>
-          <button style={styles.toolBtn} onClick={rotate} title="Rotate 90°"><RotateCw size={15} /></button>
-          <button
-            style={{ ...styles.toolBtn, ...(mirrored ? styles.toolBtnActive : {}) }}
-            onClick={toggleMirror}
-            title="Mirror"
-          ><ArrowLeftRight size={15} /></button>
-          <button
-            style={{ ...styles.toolBtn, ...(isHD ? styles.toolBtnActive : {}), fontSize: 11, fontWeight: 700 }}
-            onClick={() => setIsHD(h => !h)}
-            title="HD Toggle"
-          >HD</button>
-        </div>
+        {!isMobile && <div style={styles.toolDivider} />}
+        {!isMobile && (
+          <div style={styles.toolGroup}>
+            <button style={styles.toolBtn} onClick={rotate} title="Rotate 90°"><RotateCw size={15} /></button>
+            <button
+              style={{ ...styles.toolBtn, ...(mirrored ? styles.toolBtnActive : {}) }}
+              onClick={toggleMirror}
+              title="Mirror"
+            ><ArrowLeftRight size={15} /></button>
+            <button
+              style={{ ...styles.toolBtn, ...(isHD ? styles.toolBtnActive : {}), fontSize: 11, fontWeight: 700 }}
+              onClick={() => setIsHD(h => !h)}
+              title="HD Toggle"
+            >HD</button>
+          </div>
+        )}
         <div style={styles.toolDivider} />
         <input
           style={styles.searchInput}
-          placeholder="Search areas or Pokémon..."
+          placeholder={isMobile ? 'Search...' : 'Search areas or Pokémon...'}
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
         />
         {searchQuery && searchMode === 'pokemon' && (
           <span style={styles.searchModeBadge}>Pokémon</span>
         )}
-        <button
-          style={{ ...styles.toolBtn, ...(showLabels ? styles.toolBtnActive : {}) }}
-          onClick={() => setShowLabels(l => !l)}
-          title="Toggle Area Labels"
-        ><Type size={15} /></button>
-        <button
-          style={{ ...styles.toolBtn, ...(showLegend ? styles.toolBtnActive : {}) }}
-          onClick={() => setShowLegend(l => !l)}
-          title="Toggle Legend"
-        ><Layers size={15} /></button>
-        <div style={styles.toolDivider} />
-        <button style={styles.editMapBtn} onClick={() => setShowEditor(true)}>
-          <Pencil size={13} />
-          <span>Edit Map</span>
-        </button>
+        {!isMobile && (
+          <>
+            <button
+              style={{ ...styles.toolBtn, ...(showLabels ? styles.toolBtnActive : {}) }}
+              onClick={() => setShowLabels(l => !l)}
+              title="Toggle Area Labels"
+            ><Type size={15} /></button>
+            <button
+              style={{ ...styles.toolBtn, ...(showLegend ? styles.toolBtnActive : {}) }}
+              onClick={() => setShowLegend(l => !l)}
+              title="Toggle Legend"
+            ><Layers size={15} /></button>
+            <div style={styles.toolDivider} />
+            <button style={styles.editMapBtn} onClick={() => setShowEditor(true)}>
+              <Pencil size={13} />
+              <span>Edit Map</span>
+            </button>
+          </>
+        )}
+        {isMobile && steps.length > 0 && (
+          <button
+            style={{ ...styles.toolBtn, marginLeft: 'auto', position: 'relative' }}
+            onClick={() => setPanelOpen(o => !o)}
+            title="Step info"
+          >
+            <ChevronRight size={15} style={{ transform: panelOpen ? 'rotate(90deg)' : 'rotate(-90deg)', transition: 'transform 0.2s' }} />
+          </button>
+        )}
       </div>
 
       {/* Map + panel */}
@@ -381,8 +627,13 @@ export default function MapView({ game, onNavigateToPokemon }) {
           onMouseMove={(e) => { handleMouseMove(e); handleMouseMoveTooltip(e) }}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          onClick={() => setSelectedArea(null)}
+          onClick={() => { setSelectedArea(null); if (isMobile) setPanelOpen(false) }}
         >
+          {mapImage && !imageLoaded && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 20, pointerEvents: 'none',
+              background: 'linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-tertiary) 50%, var(--bg-secondary) 75%)',
+              backgroundSize: '800px 100%', animation: 'map-shimmer 1.4s infinite linear' }} />
+          )}
           <div
             style={{
               position: 'absolute',
@@ -399,16 +650,21 @@ export default function MapView({ game, onNavigateToPokemon }) {
                 style={{ display: 'block', width: mapWidth, height: mapHeight }}
                 draggable={false}
                 onLoad={e => {
+                  setImageLoaded(true)
                   const nw = e.target.naturalWidth
                   const nh = e.target.naturalHeight
-                  // Only override if image natural size differs from stored dimensions
                   if (nw && nh && (nw !== gameMapData?.width || nh !== gameMapData?.height)) {
                     setNaturalImageSize({ width: nw, height: nh })
+                  }
+                  // Center on current step location once per game load
+                  if (currentStepLoc && !hasCenteredRef.current) {
+                    hasCenteredRef.current = true
+                    requestAnimationFrame(() => centerOnArea(currentStepLoc))
                   }
                 }}
               />
             )}
-            <svg
+            {(imageLoaded || !mapImage) && <svg
               ref={svgRef}
               width={mapWidth}
               height={mapHeight}
@@ -439,6 +695,7 @@ export default function MapView({ game, onNavigateToPokemon }) {
                 return (
                   <g
                     key={area.id}
+                    data-areaid={area.id}
                     filter={`url(#mv-border-${area.id})`}
                     style={{ opacity, transition: 'opacity 0.15s' }}
                     onClick={(e) => handleAreaClick(e, area)}
@@ -482,7 +739,7 @@ export default function MapView({ game, onNavigateToPokemon }) {
                   </g>
                 )
               })}
-            </svg>
+            </svg>}
           </div>
 
           {/* Scale indicator */}
@@ -491,10 +748,20 @@ export default function MapView({ game, onNavigateToPokemon }) {
           </div>
         </div>
 
-        {/* Side panel */}
-        <div style={styles.sidePanel}>
-          {/* Current Step */}
-          {steps.length > 0 && (
+        {/* Side panel — right column on desktop, bottom sheet on mobile */}
+        <div ref={sidePanelRef} style={isMobile ? {
+          ...styles.sidePanelMobile,
+          transform: panelOpen ? 'translateY(0)' : 'translateY(100%)',
+        } : styles.sidePanel}>
+          {/* Mobile drag handle */}
+          {isMobile && (
+            <div style={styles.mobileHandle} onClick={() => setPanelOpen(false)}>
+              <div style={styles.mobileHandleBar} />
+            </div>
+          )}
+
+          {/* Current Step — hidden on mobile when an area is tapped */}
+          {steps.length > 0 && !(isMobile && selectedArea) && (
             <div style={styles.stepCard}>
               <div style={styles.stepHeader}>
                 <span style={styles.stepLabel}>Current Step</span>
@@ -541,8 +808,8 @@ export default function MapView({ game, onNavigateToPokemon }) {
             </div>
           )}
 
-          {/* Legend */}
-          {showLegend && (
+          {/* Legend — hidden when an area is selected so the detail is immediately visible */}
+          {showLegend && !selectedArea && (
             <div style={styles.legend}>
               <div style={styles.legendTitle}>Legend</div>
               {Object.entries(AREA_COLORS).map(([type, color]) => (
@@ -630,8 +897,8 @@ export default function MapView({ game, onNavigateToPokemon }) {
         </div>
       </div>
 
-      {/* Tooltip */}
-      {hoveredArea && !selectedArea && (
+      {/* Tooltip (desktop only) */}
+      {!isMobile && hoveredArea && !selectedArea && (
         <div style={{
           ...styles.tooltip,
           left: tooltipPos.x + 12,
@@ -639,6 +906,57 @@ export default function MapView({ game, onNavigateToPokemon }) {
         }}>
           {hoveredArea.name}
         </div>
+      )}
+
+      {/* Mobile step widget — pinned card or tap-to-open FAB */}
+      {isMobile && steps.length > 0 && !panelOpen && !selectedArea && (
+        stepPinned ? (
+          <div style={styles.pinnedCard}>
+            <div style={styles.pinnedTop}>
+              <span style={styles.pinnedStepNum}>Step {currentStepIdx + 1}/{steps.length}</span>
+              <button style={styles.pinBtn} onClick={togglePin} title="Unpin">
+                <Pin size={13} />
+              </button>
+            </div>
+            <div style={styles.pinnedText}>
+              {currentStep
+                ? (typeof currentStep === 'string' ? currentStep : (currentStep.text || currentStep.title || `Step ${currentStepIdx + 1}`))
+                : `Step ${currentStepIdx + 1}`}
+            </div>
+            {currentStepLoc && (
+              <button style={styles.pinnedLocBtn} onClick={() => focusOnArea(currentStepLoc)}>
+                <MapPin size={11} /> {currentStepLoc}
+              </button>
+            )}
+            <div style={styles.pinnedBtns}>
+              <button
+                style={{ ...styles.pinnedBtn, opacity: currentStepIdx === 0 ? 0.4 : 1 }}
+                onClick={() => currentStepIdx > 0 && saveStep(currentStepIdx - 1)}
+                disabled={currentStepIdx === 0}
+              >← Prev</button>
+              <button
+                style={{ ...styles.pinnedBtn, ...styles.pinnedBtnPrimary, opacity: currentStepIdx >= steps.length - 1 ? 0.4 : 1 }}
+                onClick={() => currentStepIdx < steps.length - 1 && saveStep(currentStepIdx + 1)}
+                disabled={currentStepIdx >= steps.length - 1}
+              >{currentStepIdx >= steps.length - 2 ? 'Finish ✓' : 'Next →'}</button>
+            </div>
+          </div>
+        ) : (
+          <div style={styles.mobileFab}>
+            <button style={styles.mobileFabMain} onClick={() => setPanelOpen(true)}>
+              Step {currentStepIdx + 1}/{steps.length}
+            </button>
+            <button style={styles.mobileFabPin} onClick={togglePin} title="Pin step info">
+              <Pin size={13} />
+            </button>
+          </div>
+        )
+      )}
+      {/* Area-selected FAB */}
+      {isMobile && selectedArea && !panelOpen && (
+        <button style={styles.mobileFabSimple} onClick={() => setPanelOpen(true)}>
+          {selectedArea.name}
+        </button>
       )}
 
       {showEditor && (
@@ -649,6 +967,39 @@ export default function MapView({ game, onNavigateToPokemon }) {
           onSave={handleSaveMapEditor}
         />
       )}
+    </div>
+  )
+}
+
+function MapSkeleton() {
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-primary)' }}>
+      <style>{`
+        @keyframes map-sk-shimmer {
+          0% { background-position: -800px 0 }
+          100% { background-position: 800px 0 }
+        }
+        .map-skel {
+          background: linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-tertiary) 50%, var(--bg-secondary) 75%);
+          background-size: 800px 100%;
+          animation: map-sk-shimmer 1.4s infinite linear;
+          border-radius: 6px;
+        }
+      `}</style>
+      {/* Toolbar skeleton */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)', flexShrink: 0 }}>
+        {[1,2,3,4,5,6].map(i => (
+          <div key={i} className="map-skel" style={{ width: 32, height: 32, borderRadius: 6 }} />
+        ))}
+        <div style={{ flex: 1 }} />
+        <div className="map-skel" style={{ width: 160, height: 30, borderRadius: 6 }} />
+      </div>
+      {/* Map area skeleton */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+          <div className="map-skel" style={{ position: 'absolute', inset: 0, borderRadius: 0 }} />
+        </div>
+      </div>
     </div>
   )
 }
@@ -671,6 +1022,7 @@ const styles = {
     borderBottom: '1px solid var(--border-color)',
     flexShrink: 0,
     zIndex: 10,
+    flexWrap: 'wrap',
   },
   toolGroup: {
     display: 'flex',
@@ -709,8 +1061,9 @@ const styles = {
     padding: '5px 10px',
     color: 'var(--text-primary)',
     fontSize: 12,
-    width: 190,
+    width: 'clamp(90px, 30vw, 190px)',
     outline: 'none',
+    minWidth: 0,
   },
   searchModeBadge: {
     background: 'var(--game-color)33',
@@ -741,6 +1094,7 @@ const styles = {
     flex: 1,
     display: 'flex',
     overflow: 'hidden',
+    position: 'relative',
   },
   mapCanvas: {
     flex: 1,
@@ -754,6 +1108,33 @@ const styles = {
     borderLeft: '1px solid var(--border-color)',
     overflowY: 'auto',
     flexShrink: 0,
+  },
+  sidePanelMobile: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    maxHeight: '55%',
+    background: 'var(--bg-secondary)',
+    borderTop: '1px solid var(--border-color)',
+    borderRadius: '16px 16px 0 0',
+    overflowY: 'auto',
+    zIndex: 100,
+    transition: 'transform 0.3s cubic-bezier(0.4,0,0.2,1)',
+    boxShadow: '0 -8px 32px rgba(0,0,0,0.4)',
+  },
+  mobileHandle: {
+    display: 'flex',
+    justifyContent: 'center',
+    padding: '10px 0 6px',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  mobileHandleBar: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    background: 'var(--border-color)',
   },
   stepCard: {
     flexShrink: 0,
@@ -1022,5 +1403,138 @@ const styles = {
     height: '100%',
     color: 'var(--text-secondary)',
     textAlign: 'center',
+  },
+  mobileFab: {
+    position: 'absolute',
+    bottom: 16,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    alignItems: 'center',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 20,
+    zIndex: 50,
+    boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+    overflow: 'hidden',
+    maxWidth: '86vw',
+  },
+  mobileFabMain: {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--text-primary)',
+    padding: '8px 14px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  mobileFabPin: {
+    background: 'transparent',
+    border: 'none',
+    borderLeft: '1px solid var(--border-color)',
+    color: 'var(--text-muted)',
+    padding: '8px 12px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  mobileFabSimple: {
+    position: 'absolute',
+    bottom: 16,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 20,
+    padding: '8px 18px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    zIndex: 50,
+    boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+    whiteSpace: 'nowrap',
+    maxWidth: '80vw',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  pinnedCard: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    right: 12,
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 14,
+    padding: '10px 12px',
+    zIndex: 50,
+    boxShadow: '0 4px 20px rgba(0,0,0,0.45)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  pinnedTop: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  pinnedStepNum: {
+    fontSize: 11,
+    fontWeight: 700,
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  pinBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--game-color)',
+    cursor: 'pointer',
+    padding: '2px 4px',
+    display: 'flex',
+    alignItems: 'center',
+    borderRadius: 4,
+  },
+  pinnedText: {
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    lineHeight: 1.45,
+    maxHeight: 56,
+    overflowY: 'auto',
+  },
+  pinnedLocBtn: {
+    alignSelf: 'flex-start',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    background: 'var(--game-color)18',
+    color: 'var(--game-color)',
+    border: '1px solid var(--game-color)44',
+    borderRadius: 10,
+    padding: '2px 8px 2px 6px',
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  pinnedBtns: {
+    display: 'flex',
+    gap: 6,
+  },
+  pinnedBtn: {
+    flex: 1,
+    background: 'var(--bg-tertiary)',
+    color: 'var(--text-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 8,
+    padding: '6px 0',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  pinnedBtnPrimary: {
+    background: 'var(--game-color)',
+    color: '#fff',
+    border: 'none',
   },
 }

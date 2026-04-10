@@ -34,12 +34,21 @@ const ManageIcon = () => (
   </svg>
 )
 
+// All nav items (used by sidebar + keyboard shortcuts)
 export const NAV_ITEMS = [
   { id: 'walkthrough', label: 'Walkthrough', Icon: WalkthroughIcon, shortcut: '1' },
   { id: 'map', label: 'Map', Icon: MapIcon, shortcut: '2' },
   { id: 'pokedex', label: 'Pokédex', Icon: PokedexIcon, shortcut: '3' },
   { id: 'types', label: 'Type Chart', Icon: TypesIcon, shortcut: '4' },
   { id: 'manage', label: 'Manage', Icon: ManageIcon, shortcut: '5' },
+]
+
+// Mobile bottom nav — excludes Manage (it's in the hamburger sidebar)
+export const MOBILE_NAV_ITEMS = [
+  { id: 'walkthrough', label: 'Walkthrough', Icon: WalkthroughIcon },
+  { id: 'map', label: 'Map', Icon: MapIcon },
+  { id: 'pokedex', label: 'Pokédex', Icon: PokedexIcon },
+  { id: 'types', label: 'Type Chart', Icon: TypesIcon },
 ]
 
 export default function Sidebar({ games, selectedGame, onSelectGame, activeView, onNavigate, onOpenOptions, onClose }) {
